@@ -1,11 +1,9 @@
 <script lang="ts">
+  import { handleError } from '$lib/utils/handle-error';
   import { deleteAllSessions, deleteSession, getSessions, type SessionResponseDto } from '@immich/sdk';
-  import { handleError } from '../../utils/handle-error';
-  import { notificationController, NotificationType } from '../shared-components/notification/notification';
-  import DeviceCard from './device-card.svelte';
-  import { dialogController } from '$lib/components/shared-components/dialog/dialog';
+  import { Button, modalManager, Text, toastManager } from '@immich/ui';
   import { t } from 'svelte-i18n';
-  import { Button } from '@immich/ui';
+  import DeviceCard from './device-card.svelte';
 
   interface Props {
     devices: SessionResponseDto[];
@@ -15,21 +13,18 @@
 
   const refresh = () => getSessions().then((_devices) => (devices = _devices));
 
-  let currentDevice = $derived(devices.find((device) => device.current));
-  let otherDevices = $derived(devices.filter((device) => !device.current));
+  let currentSession = $derived(devices.find((device) => device.current));
+  let otherSessions = $derived(devices.filter((device) => !device.current));
 
   const handleDelete = async (device: SessionResponseDto) => {
-    const isConfirmed = await dialogController.show({
-      prompt: $t('logout_this_device_confirmation'),
-    });
-
+    const isConfirmed = await modalManager.showDialog({ prompt: $t('logout_this_device_confirmation') });
     if (!isConfirmed) {
       return;
     }
 
     try {
       await deleteSession({ id: device.id });
-      notificationController.show({ message: $t('logged_out_device'), type: NotificationType.Info });
+      toastManager.success($t('logged_out_device'));
     } catch (error) {
       handleError(error, $t('errors.unable_to_log_out_device'));
     } finally {
@@ -38,17 +33,14 @@
   };
 
   const handleDeleteAll = async () => {
-    const isConfirmed = await dialogController.show({ prompt: $t('logout_all_device_confirmation') });
+    const isConfirmed = await modalManager.showDialog({ prompt: $t('logout_all_device_confirmation') });
     if (!isConfirmed) {
       return;
     }
 
     try {
       await deleteAllSessions();
-      notificationController.show({
-        message: $t('logged_out_all_devices'),
-        type: NotificationType.Info,
-      });
+      toastManager.success($t('logged_out_all_devices'));
     } catch (error) {
       handleError(error, $t('errors.unable_to_log_out_all_devices'));
     } finally {
@@ -58,29 +50,31 @@
 </script>
 
 <section class="my-4">
-  {#if currentDevice}
+  {#if currentSession}
     <div class="mb-6">
-      <h3 class="mb-2 text-xs font-medium text-immich-primary dark:text-immich-dark-primary">
-        {$t('current_device').toUpperCase()}
-      </h3>
-      <DeviceCard device={currentDevice} />
+      <Text class="mb-2" fontWeight="medium" size="tiny" color="primary">
+        {$t('current_device')}
+      </Text>
+      <DeviceCard session={currentSession} />
     </div>
   {/if}
-  {#if otherDevices.length > 0}
+  {#if otherSessions.length > 0}
     <div class="mb-6">
-      <h3 class="mb-2 text-xs font-medium text-immich-primary dark:text-immich-dark-primary">
-        {$t('other_devices').toUpperCase()}
-      </h3>
-      {#each otherDevices as device, index (device.id)}
-        <DeviceCard {device} onDelete={() => handleDelete(device)} />
-        {#if index !== otherDevices.length - 1}
+      <Text class="mb-2" fontWeight="medium" size="tiny" color="primary">
+        {$t('other_devices')}
+      </Text>
+      {#each otherSessions as session, index (session.id)}
+        <DeviceCard {session} onDelete={() => handleDelete(session)} />
+        {#if index !== otherSessions.length - 1}
           <hr class="my-3" />
         {/if}
       {/each}
     </div>
-    <h3 class="mb-2 text-xs font-medium text-immich-primary dark:text-immich-dark-primary">
-      {$t('log_out_all_devices').toUpperCase()}
-    </h3>
+
+    <div class="my-3">
+      <hr />
+    </div>
+
     <div class="flex justify-end">
       <Button shape="round" color="danger" size="small" onclick={handleDeleteAll}>{$t('log_out_all_devices')}</Button>
     </div>

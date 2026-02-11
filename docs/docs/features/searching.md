@@ -5,50 +5,30 @@ import TabItem from '@theme/TabItem';
 
 Immich uses Postgres as its search database for both metadata and contextual CLIP search.
 
-Contextual CLIP search is powered by the [pgvecto.rs](https://github.com/tensorchord/pgvecto.rs) extension, utilizing machine learning models like [CLIP](https://openai.com/research/clip) to provide relevant search results. This allows for freeform searches without requiring specific keywords in the image or video metadata.
+Contextual CLIP search is powered by the [VectorChord](https://github.com/tensorchord/VectorChord) extension, utilizing machine learning models like [CLIP](https://openai.com/research/clip) to provide relevant search results. This allows for freeform searches without requiring specific keywords in the image or video metadata.
 
 ## Advanced Search Filters
 
 In addition, Immich offers advanced search functionality, allowing you to find specific content using customizable search filters. These filters include location, one or more faces, specific albums, and more. You can try out the search filters on the [Demo site](https://demo.immich.app).
 
-The filters smart search allows you to search by include:
+You can search the following types of content:
 
-- People
-- Location
-  - Country
-  - State
-  - City
-- Camera
-  - Make
-  - Model
-- Date range
-- File name or extension
-- Media type
-  - Image (including live/motion photos)
-  - Video
-  - All
-- Condition
-  - Not in any album
-  - Archived
-  - Favorited
-  - Rating
-
-<Tabs>
-  <TabItem value="Computer" label="Computer" default>
-
-Some search examples:
+| Type                                | Description                                           |
+| ----------------------------------- | ----------------------------------------------------- |
+| People                              | Faces that are recognized in your photos/videos.      |
+| Contextual                          | Content of the photos and videos.                     |
+| File name or extension              | Full or partial file's name, or file's extension      |
+| Description                         | Description added to assets.                          |
+| Optical Character Recognition (OCR) | Text in images                                        |
+| Locations                           | Cities, states, and countries from reverse geocoding. |
+| Tags                                | Tags assigned or extracted from assets.               |
+| Camera                              | make, model and lens model                            |
+| Time frame                          | Start and end date of a specific time bucket          |
+| Media type                          | Image or video or both                                |
+| Display options                     | In Archive, in Favorites or Not in any album          |
+| Start rating                        | User-assigned start rating                            |
 
 <img src={require('./img/advanced-search-filters.webp').default} width="70%" title='Advanced search filters' />
-
-<img src={require('./img/search-ex-1.webp').default} width="70%" title='Search Example 1' />
-
-</TabItem>
-  <TabItem value="Mobile" label="Mobile">
-
-<img src={require('./img/mobile-smart-search.webp').default} width="30%" title='Smart search on mobile' />
-
-</TabItem>
-</Tabs>
 
 ## Configuration
 
@@ -92,7 +72,7 @@ Memory and execution time estimates were obtained without acceleration on a 7800
 
 **Execution Time (ms)**: After warming up the model with one pass, the mean execution time of 100 passes with the same input.
 
-**Memory (MiB)**: The peak RSS usage of the process afer performing the above timing benchmark. Does not include image decoding, concurrent processing, the web server, etc., which are relatively constant factors.
+**Memory (MiB)**: The peak RSS usage of the process after performing the above timing benchmark. Does not include image decoding, concurrent processing, the web server, etc., which are relatively constant factors.
 
 **Recall (%)**: Evaluated on Crossmodal-3600, the average of the recall@1, recall@5 and recall@10 results for zeroshot image retrieval. Chinese (Simplified), English, French, German, Italian, Japanese, Korean, Polish, Russian, Spanish and Turkish are additionally tested on XTD-10. Chinese (Simplified) and English are additionally tested on Flickr30k. The recall metrics are the average across all tested datasets.
 
@@ -1222,4 +1202,4 @@ Feel free to make a feature request if there's a model you want to use that we d
 [huggingface-clip]: https://huggingface.co/collections/immich-app/clip-654eaefb077425890874cd07
 [huggingface-multilingual-clip]: https://huggingface.co/collections/immich-app/multilingual-clip-654eb08c2382f591eeb8c2a7
 [smart-search-settings]: https://my.immich.app/admin/system-settings?isOpen=machine-learning+smart-search
-[job-status-page]: https://my.immich.app/admin/jobs-status
+[job-status-page]: https://my.immich.app/admin/queues

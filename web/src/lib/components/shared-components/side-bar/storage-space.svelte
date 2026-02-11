@@ -1,12 +1,12 @@
 <script lang="ts">
   import { locale } from '$lib/stores/preferences.store';
   import { user } from '$lib/stores/user.store';
+  import { userInteraction } from '$lib/stores/user.svelte';
   import { requestServerInfo } from '$lib/utils/auth';
+  import { getByteUnitString } from '$lib/utils/byte-units';
+  import { LoadingSpinner } from '@immich/ui';
   import { onMount } from 'svelte';
   import { t } from 'svelte-i18n';
-  import { getByteUnitString } from '$lib/utils/byte-units';
-  import LoadingSpinner from '../loading-spinner.svelte';
-  import { userInteraction } from '$lib/stores/user.svelte';
 
   let usageClasses = $state('');
 
@@ -28,7 +28,7 @@
       return 'bg-yellow-500';
     }
 
-    return 'bg-immich-primary dark:bg-immich-dark-primary';
+    return 'bg-primary';
   };
 
   $effect(() => {
@@ -46,7 +46,7 @@
 </script>
 
 <div
-  class="storage-status p-4 bg-gray-100 dark:bg-immich-dark-primary/10 ml-4 rounded-lg text-sm min-w-52"
+  class="storage-status p-4 bg-gray-100 dark:bg-immich-dark-primary/10 ms-4 rounded-lg text-sm min-w-52"
   title={$t('storage_usage', {
     values: {
       used: getByteUnitString(usedBytes, $locale, 3),
@@ -66,8 +66,8 @@
       })}
     </p>
 
-    <div class="mt-4 h-[7px] w-full rounded-full bg-gray-200 dark:bg-gray-700">
-      <div class="h-[7px] rounded-full {usageClasses}" style="width: {usedPercentage}%"></div>
+    <div class="mt-4 h-1.75 w-full rounded-full bg-gray-200 dark:bg-gray-700">
+      <div class="h-1.75 rounded-full {usageClasses}" style="width: {usedPercentage}%"></div>
     </div>
   {:else}
     <div class="mt-2">

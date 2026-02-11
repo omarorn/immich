@@ -9,7 +9,7 @@ import {
 } from '@immich/sdk';
 import { createUserDto, uuidDto } from 'src/fixtures';
 import { errorDto } from 'src/responses';
-import { app, asBearerAuth, shareUrl, utils } from 'src/utils';
+import { app, asBearerAuth, baseUrl, shareUrl, utils } from 'src/utils';
 import request from 'supertest';
 import { beforeAll, describe, expect, it } from 'vitest';
 
@@ -20,7 +20,6 @@ describe('/shared-links', () => {
   let user1: LoginResponseDto;
   let user2: LoginResponseDto;
   let album: AlbumResponseDto;
-  let metadataAlbum: AlbumResponseDto;
   let deletedAlbum: AlbumResponseDto;
   let linkWithDeletedAlbum: SharedLinkResponseDto;
   let linkWithPassword: SharedLinkResponseDto;
@@ -41,18 +40,9 @@ describe('/shared-links', () => {
 
     [asset1, asset2] = await Promise.all([utils.createAsset(user1.accessToken), utils.createAsset(user1.accessToken)]);
 
-    [album, deletedAlbum, metadataAlbum] = await Promise.all([
+    [album, deletedAlbum] = await Promise.all([
       createAlbum({ createAlbumDto: { albumName: 'album' } }, { headers: asBearerAuth(user1.accessToken) }),
       createAlbum({ createAlbumDto: { albumName: 'deleted album' } }, { headers: asBearerAuth(user2.accessToken) }),
-      createAlbum(
-        {
-          createAlbumDto: {
-            albumName: 'metadata album',
-            assetIds: [asset1.id],
-          },
-        },
-        { headers: asBearerAuth(user1.accessToken) },
-      ),
     ]);
 
     [linkWithDeletedAlbum, linkWithAlbum, linkWithAssets, linkWithPassword, linkWithMetadata, linkWithoutMetadata] =
@@ -75,13 +65,14 @@ describe('/shared-links', () => {
           password: 'foo',
         }),
         utils.createSharedLink(user1.accessToken, {
-          type: SharedLinkType.Album,
-          albumId: metadataAlbum.id,
+          type: SharedLinkType.Individual,
+          assetIds: [asset1.id],
           showMetadata: true,
+          slug: 'metadata-slug',
         }),
         utils.createSharedLink(user1.accessToken, {
-          type: SharedLinkType.Album,
-          albumId: metadataAlbum.id,
+          type: SharedLinkType.Individual,
+          assetIds: [asset1.id],
           showMetadata: false,
         }),
       ]);
@@ -94,9 +85,7 @@ describe('/shared-links', () => {
       const resp = await request(shareUrl).get(`/${linkWithMetadata.key}`);
       expect(resp.status).toBe(200);
       expect(resp.header['content-type']).toContain('text/html');
-      expect(resp.text).toContain(
-        `<meta name="description" content="${metadataAlbum.assets.length} shared photos &amp; videos" />`,
-      );
+      expect(resp.text).toContain(`<meta name="description" content="1 shared photos &amp; videos" />`);
     });
 
     it('should have correct asset count in meta tag for empty album', async () => {
@@ -117,7 +106,33 @@ describe('/shared-links', () => {
       const resp = await request(shareUrl).get(`/${linkWithAssets.key}`);
       expect(resp.status).toBe(200);
       expect(resp.header['content-type']).toContain('text/html');
+      expect(resp.text).toContain(`<meta property="og:image" content="http://127.0.0.1:2285`);
+    });
+
+    it('should fall back to my.immich.app og:image meta tag for shared asset if Host header is not present', async () => {
+      const resp = await request(shareUrl).get(`/${linkWithAssets.key}`).set('Host', '');
+      expect(resp.status).toBe(200);
+      expect(resp.header['content-type']).toContain('text/html');
       expect(resp.text).toContain(`<meta property="og:image" content="https://my.immich.app`);
+    });
+
+    it('should return 404 for an invalid shared link', async () => {
+      const resp = await request(shareUrl).get(`/invalid-key`);
+      expect(resp.status).toBe(404);
+      expect(resp.header['content-type']).toContain('text/html');
+      expect(resp.text).not.toContain(`og:type`);
+      expect(resp.text).not.toContain(`og:title`);
+      expect(resp.text).not.toContain(`og:description`);
+      expect(resp.text).not.toContain(`og:image`);
+    });
+  });
+
+  describe('GET /s/:slug', () => {
+    it('should work for slug auth', async () => {
+      const resp = await request(baseUrl).get(`/s/${linkWithMetadata.slug}`);
+      expect(resp.status).toBe(200);
+      expect(resp.header['content-type']).toContain('text/html');
+      expect(resp.text).toContain(`<meta name="description" content="1 shared photos &amp; videos" />`);
     });
   });
 
@@ -242,12 +257,12 @@ describe('/shared-links', () => {
       );
     });
 
-    it('should return metadata for album shared link', async () => {
+    it('should return metadata for individual shared link', async () => {
       const { status, body } = await request(app).get('/shared-links/me').query({ key: linkWithMetadata.key });
 
       expect(status).toBe(200);
-      expect(body.assets).toHaveLength(0);
-      expect(body.album).toBeDefined();
+      expect(body.assets).toHaveLength(1);
+      expect(body.album).not.toBeDefined();
     });
 
     it('should not return metadata for album shared link without metadata', async () => {
@@ -255,7 +270,7 @@ describe('/shared-links', () => {
 
       expect(status).toBe(200);
       expect(body.assets).toHaveLength(1);
-      expect(body.album).toBeDefined();
+      expect(body.album).not.toBeDefined();
 
       const asset = body.assets[0];
       expect(asset).not.toHaveProperty('exifInfo');
@@ -456,7 +471,7 @@ describe('/shared-links', () => {
         .delete(`/shared-links/${linkWithAlbum.id}`)
         .set('Authorization', `Bearer ${user1.accessToken}`);
 
-      expect(status).toBe(200);
+      expect(status).toBe(204);
     });
   });
 });

@@ -1,8 +1,7 @@
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { BulkIdErrorReason } from 'src/dtos/asset-ids.response.dto';
 import { mapFaces, mapPerson, PersonResponseDto } from 'src/dtos/person.dto';
-import { CacheControl, Colorspace, ImageFormat, JobName, JobStatus, SourceType, SystemMetadataKey } from 'src/enum';
-import { WithoutProperty } from 'src/repositories/asset.repository';
+import { CacheControl, JobName, JobStatus, SourceType, SystemMetadataKey } from 'src/enum';
 import { DetectedFaces } from 'src/repositories/machine-learning.repository';
 import { FaceSearchResult } from 'src/repositories/search.repository';
 import { PersonService } from 'src/services/person.service';
@@ -10,7 +9,7 @@ import { ImmichFileResponse } from 'src/utils/file';
 import { assetStub } from 'test/fixtures/asset.stub';
 import { authStub } from 'test/fixtures/auth.stub';
 import { faceStub } from 'test/fixtures/face.stub';
-import { personStub, personThumbnailStub } from 'test/fixtures/person.stub';
+import { personStub } from 'test/fixtures/person.stub';
 import { systemConfigStub } from 'test/fixtures/system-config.stub';
 import { factory } from 'test/small.factory';
 import { makeStream, newTestService, ServiceMocks } from 'test/utils';
@@ -183,7 +182,7 @@ describe(PersonService.name, () => {
         new ImmichFileResponse({
           path: '/path/to/thumbnail.jpg',
           contentType: 'image/jpeg',
-          cacheControl: CacheControl.PRIVATE_WITHOUT_CACHE,
+          cacheControl: CacheControl.PrivateWithoutCache,
         }),
       );
       expect(mocks.access.person.checkOwnerAccess).toHaveBeenCalledWith(authStub.admin.user.id, new Set(['person-1']));
@@ -277,7 +276,7 @@ describe(PersonService.name, () => {
         },
       ]);
       expect(mocks.job.queue).toHaveBeenCalledWith({
-        name: JobName.GENERATE_PERSON_THUMBNAIL,
+        name: JobName.PersonGenerateThumbnail,
         data: { id: 'person-1' },
       });
       expect(mocks.access.person.checkOwnerAccess).toHaveBeenCalledWith(authStub.admin.user.id, new Set(['person-1']));
@@ -338,7 +337,7 @@ describe(PersonService.name, () => {
 
       expect(mocks.job.queueAll).toHaveBeenCalledWith([
         {
-          name: JobName.GENERATE_PERSON_THUMBNAIL,
+          name: JobName.PersonGenerateThumbnail,
           data: { id: personStub.newThumbnail.id },
         },
       ]);
@@ -347,7 +346,7 @@ describe(PersonService.name, () => {
 
   describe('handlePersonMigration', () => {
     it('should not move person files', async () => {
-      await expect(sut.handlePersonMigration(personStub.noName)).resolves.toBe(JobStatus.FAILED);
+      await expect(sut.handlePersonMigration(personStub.noName)).resolves.toBe(JobStatus.Failed);
     });
   });
 
@@ -355,6 +354,7 @@ describe(PersonService.name, () => {
     it('should get the bounding boxes for an asset', async () => {
       mocks.access.asset.checkOwnerAccess.mockResolvedValue(new Set([faceStub.face1.assetId]));
       mocks.person.getFaces.mockResolvedValue([faceStub.primaryFace1]);
+      mocks.asset.getById.mockResolvedValue(assetStub.image);
       await expect(sut.getFacesById(authStub.admin, { id: faceStub.face1.assetId })).resolves.toStrictEqual([
         mapFaces(faceStub.primaryFace1, authStub.admin),
       ]);
@@ -374,7 +374,7 @@ describe(PersonService.name, () => {
       await sut.createNewFeaturePhoto([personStub.newThumbnail.id]);
       expect(mocks.job.queueAll).toHaveBeenCalledWith([
         {
-          name: JobName.GENERATE_PERSON_THUMBNAIL,
+          name: JobName.PersonGenerateThumbnail,
           data: { id: personStub.newThumbnail.id },
         },
       ]);
@@ -448,92 +448,84 @@ describe(PersonService.name, () => {
     it('should skip if machine learning is disabled', async () => {
       mocks.systemMetadata.get.mockResolvedValue(systemConfigStub.machineLearningDisabled);
 
-      await expect(sut.handleQueueDetectFaces({})).resolves.toBe(JobStatus.SKIPPED);
+      await expect(sut.handleQueueDetectFaces({})).resolves.toBe(JobStatus.Skipped);
       expect(mocks.job.queue).not.toHaveBeenCalled();
       expect(mocks.job.queueAll).not.toHaveBeenCalled();
       expect(mocks.systemMetadata.get).toHaveBeenCalled();
     });
 
     it('should queue missing assets', async () => {
-      mocks.asset.getWithout.mockResolvedValue({
-        items: [assetStub.image],
-        hasNextPage: false,
-      });
+      mocks.assetJob.streamForDetectFacesJob.mockReturnValue(makeStream([assetStub.image]));
 
       await sut.handleQueueDetectFaces({ force: false });
 
-      expect(mocks.asset.getWithout).toHaveBeenCalledWith({ skip: 0, take: 1000 }, WithoutProperty.FACES);
+      expect(mocks.assetJob.streamForDetectFacesJob).toHaveBeenCalledWith(false);
+      expect(mocks.person.vacuum).not.toHaveBeenCalled();
       expect(mocks.job.queueAll).toHaveBeenCalledWith([
         {
-          name: JobName.FACE_DETECTION,
+          name: JobName.AssetDetectFaces,
           data: { id: assetStub.image.id },
         },
       ]);
     });
 
     it('should queue all assets', async () => {
-      mocks.asset.getAll.mockResolvedValue({
-        items: [assetStub.image],
-        hasNextPage: false,
-      });
+      mocks.assetJob.streamForDetectFacesJob.mockReturnValue(makeStream([assetStub.image]));
       mocks.person.getAllWithoutFaces.mockResolvedValue([personStub.withName]);
 
       await sut.handleQueueDetectFaces({ force: true });
 
-      expect(mocks.person.deleteFaces).toHaveBeenCalledWith({ sourceType: SourceType.MACHINE_LEARNING });
+      expect(mocks.person.deleteFaces).toHaveBeenCalledWith({ sourceType: SourceType.MachineLearning });
       expect(mocks.person.delete).toHaveBeenCalledWith([personStub.withName.id]);
+      expect(mocks.person.vacuum).toHaveBeenCalledWith({ reindexVectors: true });
       expect(mocks.storage.unlink).toHaveBeenCalledWith(personStub.withName.thumbnailPath);
-      expect(mocks.asset.getAll).toHaveBeenCalled();
+      expect(mocks.assetJob.streamForDetectFacesJob).toHaveBeenCalledWith(true);
       expect(mocks.job.queueAll).toHaveBeenCalledWith([
         {
-          name: JobName.FACE_DETECTION,
+          name: JobName.AssetDetectFaces,
           data: { id: assetStub.image.id },
         },
       ]);
     });
 
     it('should refresh all assets', async () => {
-      mocks.asset.getAll.mockResolvedValue({
-        items: [assetStub.image],
-        hasNextPage: false,
-      });
+      mocks.assetJob.streamForDetectFacesJob.mockReturnValue(makeStream([assetStub.image]));
 
       await sut.handleQueueDetectFaces({ force: undefined });
 
       expect(mocks.person.delete).not.toHaveBeenCalled();
       expect(mocks.person.deleteFaces).not.toHaveBeenCalled();
+      expect(mocks.person.vacuum).not.toHaveBeenCalled();
       expect(mocks.storage.unlink).not.toHaveBeenCalled();
-      expect(mocks.asset.getAll).toHaveBeenCalled();
+      expect(mocks.assetJob.streamForDetectFacesJob).toHaveBeenCalledWith(undefined);
       expect(mocks.job.queueAll).toHaveBeenCalledWith([
         {
-          name: JobName.FACE_DETECTION,
+          name: JobName.AssetDetectFaces,
           data: { id: assetStub.image.id },
         },
       ]);
-      expect(mocks.job.queue).toHaveBeenCalledWith({ name: JobName.PERSON_CLEANUP });
+      expect(mocks.job.queue).toHaveBeenCalledWith({ name: JobName.PersonCleanup });
     });
 
     it('should delete existing people and faces if forced', async () => {
       mocks.person.getAll.mockReturnValue(makeStream([faceStub.face1.person, personStub.randomPerson]));
       mocks.person.getAllFaces.mockReturnValue(makeStream([faceStub.face1]));
-      mocks.asset.getAll.mockResolvedValue({
-        items: [assetStub.image],
-        hasNextPage: false,
-      });
+      mocks.assetJob.streamForDetectFacesJob.mockReturnValue(makeStream([assetStub.image]));
       mocks.person.getAllWithoutFaces.mockResolvedValue([personStub.randomPerson]);
       mocks.person.deleteFaces.mockResolvedValue();
 
       await sut.handleQueueDetectFaces({ force: true });
 
-      expect(mocks.asset.getAll).toHaveBeenCalled();
+      expect(mocks.assetJob.streamForDetectFacesJob).toHaveBeenCalledWith(true);
       expect(mocks.job.queueAll).toHaveBeenCalledWith([
         {
-          name: JobName.FACE_DETECTION,
+          name: JobName.AssetDetectFaces,
           data: { id: assetStub.image.id },
         },
       ]);
       expect(mocks.person.delete).toHaveBeenCalledWith([personStub.randomPerson.id]);
       expect(mocks.storage.unlink).toHaveBeenCalledWith(personStub.randomPerson.thumbnailPath);
+      expect(mocks.person.vacuum).toHaveBeenCalledWith({ reindexVectors: true });
     });
   });
 
@@ -549,7 +541,7 @@ describe(PersonService.name, () => {
       });
       mocks.systemMetadata.get.mockResolvedValue(systemConfigStub.machineLearningDisabled);
 
-      await expect(sut.handleQueueRecognizeFaces({})).resolves.toBe(JobStatus.SKIPPED);
+      await expect(sut.handleQueueRecognizeFaces({})).resolves.toBe(JobStatus.Skipped);
       expect(mocks.job.queueAll).not.toHaveBeenCalled();
       expect(mocks.systemMetadata.get).toHaveBeenCalled();
       expect(mocks.systemMetadata.set).not.toHaveBeenCalled();
@@ -565,7 +557,7 @@ describe(PersonService.name, () => {
         delayed: 0,
       });
 
-      await expect(sut.handleQueueRecognizeFaces({})).resolves.toBe(JobStatus.SKIPPED);
+      await expect(sut.handleQueueRecognizeFaces({})).resolves.toBe(JobStatus.Skipped);
       expect(mocks.job.queueAll).not.toHaveBeenCalled();
       expect(mocks.systemMetadata.set).not.toHaveBeenCalled();
     });
@@ -586,17 +578,18 @@ describe(PersonService.name, () => {
 
       expect(mocks.person.getAllFaces).toHaveBeenCalledWith({
         personId: null,
-        sourceType: SourceType.MACHINE_LEARNING,
+        sourceType: SourceType.MachineLearning,
       });
       expect(mocks.job.queueAll).toHaveBeenCalledWith([
         {
-          name: JobName.FACIAL_RECOGNITION,
+          name: JobName.FacialRecognition,
           data: { id: faceStub.face1.id, deferred: false },
         },
       ]);
-      expect(mocks.systemMetadata.set).toHaveBeenCalledWith(SystemMetadataKey.FACIAL_RECOGNITION_STATE, {
+      expect(mocks.systemMetadata.set).toHaveBeenCalledWith(SystemMetadataKey.FacialRecognitionState, {
         lastRun: expect.any(String),
       });
+      expect(mocks.person.vacuum).not.toHaveBeenCalled();
     });
 
     it('should queue all assets', async () => {
@@ -617,13 +610,14 @@ describe(PersonService.name, () => {
       expect(mocks.person.getAllFaces).toHaveBeenCalledWith(undefined);
       expect(mocks.job.queueAll).toHaveBeenCalledWith([
         {
-          name: JobName.FACIAL_RECOGNITION,
+          name: JobName.FacialRecognition,
           data: { id: faceStub.face1.id, deferred: false },
         },
       ]);
-      expect(mocks.systemMetadata.set).toHaveBeenCalledWith(SystemMetadataKey.FACIAL_RECOGNITION_STATE, {
+      expect(mocks.systemMetadata.set).toHaveBeenCalledWith(SystemMetadataKey.FacialRecognitionState, {
         lastRun: expect.any(String),
       });
+      expect(mocks.person.vacuum).toHaveBeenCalledWith({ reindexVectors: false });
     });
 
     it('should run nightly if new face has been added since last run', async () => {
@@ -642,20 +636,24 @@ describe(PersonService.name, () => {
       mocks.person.getAllWithoutFaces.mockResolvedValue([]);
       mocks.person.unassignFaces.mockResolvedValue();
 
-      await sut.handleQueueRecognizeFaces({ force: true, nightly: true });
+      await sut.handleQueueRecognizeFaces({ force: false, nightly: true });
 
-      expect(mocks.systemMetadata.get).toHaveBeenCalledWith(SystemMetadataKey.FACIAL_RECOGNITION_STATE);
+      expect(mocks.systemMetadata.get).toHaveBeenCalledWith(SystemMetadataKey.FacialRecognitionState);
       expect(mocks.person.getLatestFaceDate).toHaveBeenCalledOnce();
-      expect(mocks.person.getAllFaces).toHaveBeenCalledWith(undefined);
+      expect(mocks.person.getAllFaces).toHaveBeenCalledWith({
+        personId: null,
+        sourceType: SourceType.MachineLearning,
+      });
       expect(mocks.job.queueAll).toHaveBeenCalledWith([
         {
-          name: JobName.FACIAL_RECOGNITION,
+          name: JobName.FacialRecognition,
           data: { id: faceStub.face1.id, deferred: false },
         },
       ]);
-      expect(mocks.systemMetadata.set).toHaveBeenCalledWith(SystemMetadataKey.FACIAL_RECOGNITION_STATE, {
+      expect(mocks.systemMetadata.set).toHaveBeenCalledWith(SystemMetadataKey.FacialRecognitionState, {
         lastRun: expect.any(String),
       });
+      expect(mocks.person.vacuum).not.toHaveBeenCalled();
     });
 
     it('should skip nightly if no new face has been added since last run', async () => {
@@ -668,11 +666,12 @@ describe(PersonService.name, () => {
 
       await sut.handleQueueRecognizeFaces({ force: true, nightly: true });
 
-      expect(mocks.systemMetadata.get).toHaveBeenCalledWith(SystemMetadataKey.FACIAL_RECOGNITION_STATE);
+      expect(mocks.systemMetadata.get).toHaveBeenCalledWith(SystemMetadataKey.FacialRecognitionState);
       expect(mocks.person.getLatestFaceDate).toHaveBeenCalledOnce();
       expect(mocks.person.getAllFaces).not.toHaveBeenCalled();
       expect(mocks.job.queueAll).not.toHaveBeenCalled();
       expect(mocks.systemMetadata.set).not.toHaveBeenCalled();
+      expect(mocks.person.vacuum).not.toHaveBeenCalled();
     });
 
     it('should delete existing people if forced', async () => {
@@ -692,15 +691,16 @@ describe(PersonService.name, () => {
       await sut.handleQueueRecognizeFaces({ force: true });
 
       expect(mocks.person.deleteFaces).not.toHaveBeenCalled();
-      expect(mocks.person.unassignFaces).toHaveBeenCalledWith({ sourceType: SourceType.MACHINE_LEARNING });
+      expect(mocks.person.unassignFaces).toHaveBeenCalledWith({ sourceType: SourceType.MachineLearning });
       expect(mocks.job.queueAll).toHaveBeenCalledWith([
         {
-          name: JobName.FACIAL_RECOGNITION,
+          name: JobName.FacialRecognition,
           data: { id: faceStub.face1.id, deferred: false },
         },
       ]);
       expect(mocks.person.delete).toHaveBeenCalledWith([personStub.randomPerson.id]);
       expect(mocks.storage.unlink).toHaveBeenCalledWith(personStub.randomPerson.thumbnailPath);
+      expect(mocks.person.vacuum).toHaveBeenCalledWith({ reindexVectors: false });
     });
   });
 
@@ -712,7 +712,7 @@ describe(PersonService.name, () => {
     it('should skip if machine learning is disabled', async () => {
       mocks.systemMetadata.get.mockResolvedValue(systemConfigStub.machineLearningDisabled);
 
-      await expect(sut.handleDetectFaces({ id: 'foo' })).resolves.toBe(JobStatus.SKIPPED);
+      await expect(sut.handleDetectFaces({ id: 'foo' })).resolves.toBe(JobStatus.Skipped);
       expect(mocks.asset.getByIds).not.toHaveBeenCalled();
       expect(mocks.systemMetadata.get).toHaveBeenCalled();
     });
@@ -730,7 +730,6 @@ describe(PersonService.name, () => {
       mocks.assetJob.getForDetectFacesJob.mockResolvedValue({ ...assetStub.image, files: [assetStub.image.files[1]] });
       await sut.handleDetectFaces({ id: assetStub.image.id });
       expect(mocks.machineLearning.detectFaces).toHaveBeenCalledWith(
-        ['http://immich-machine-learning:3003'],
         '/uploads/user-id/thumbs/path.jpg',
         expect.objectContaining({ minScore: 0.7, modelName: 'buffalo_l' }),
       );
@@ -755,8 +754,8 @@ describe(PersonService.name, () => {
 
       expect(mocks.person.refreshFaces).toHaveBeenCalledWith([face], [], [faceSearch]);
       expect(mocks.job.queueAll).toHaveBeenCalledWith([
-        { name: JobName.QUEUE_FACIAL_RECOGNITION, data: { force: false } },
-        { name: JobName.FACIAL_RECOGNITION, data: { id: faceId } },
+        { name: JobName.FacialRecognitionQueueAll, data: { force: false } },
+        { name: JobName.FacialRecognition, data: { id: faceId } },
       ]);
       expect(mocks.person.reassignFace).not.toHaveBeenCalled();
       expect(mocks.person.reassignFaces).not.toHaveBeenCalled();
@@ -791,8 +790,8 @@ describe(PersonService.name, () => {
 
       expect(mocks.person.refreshFaces).toHaveBeenCalledWith([face], [faceStub.primaryFace1.id], [faceSearch]);
       expect(mocks.job.queueAll).toHaveBeenCalledWith([
-        { name: JobName.QUEUE_FACIAL_RECOGNITION, data: { force: false } },
-        { name: JobName.FACIAL_RECOGNITION, data: { id: faceId } },
+        { name: JobName.FacialRecognitionQueueAll, data: { force: false } },
+        { name: JobName.FacialRecognition, data: { id: faceId } },
       ]);
       expect(mocks.person.reassignFace).not.toHaveBeenCalled();
       expect(mocks.person.reassignFaces).not.toHaveBeenCalled();
@@ -831,8 +830,8 @@ describe(PersonService.name, () => {
 
       expect(mocks.person.refreshFaces).toHaveBeenCalledWith([face], [], [faceSearch]);
       expect(mocks.job.queueAll).toHaveBeenCalledWith([
-        { name: JobName.QUEUE_FACIAL_RECOGNITION, data: { force: false } },
-        { name: JobName.FACIAL_RECOGNITION, data: { id: faceId } },
+        { name: JobName.FacialRecognitionQueueAll, data: { force: false } },
+        { name: JobName.FacialRecognition, data: { id: faceId } },
       ]);
       expect(mocks.person.reassignFace).not.toHaveBeenCalled();
       expect(mocks.person.reassignFaces).not.toHaveBeenCalled();
@@ -841,7 +840,7 @@ describe(PersonService.name, () => {
 
   describe('handleRecognizeFaces', () => {
     it('should fail if face does not exist', async () => {
-      expect(await sut.handleRecognizeFaces({ id: faceStub.face1.id })).toBe(JobStatus.FAILED);
+      expect(await sut.handleRecognizeFaces({ id: faceStub.face1.id })).toBe(JobStatus.Failed);
 
       expect(mocks.person.reassignFaces).not.toHaveBeenCalled();
       expect(mocks.person.create).not.toHaveBeenCalled();
@@ -851,7 +850,7 @@ describe(PersonService.name, () => {
       const face = { ...faceStub.face1, asset: null };
       mocks.person.getFaceForFacialRecognitionJob.mockResolvedValue(face);
 
-      expect(await sut.handleRecognizeFaces({ id: faceStub.face1.id })).toBe(JobStatus.FAILED);
+      expect(await sut.handleRecognizeFaces({ id: faceStub.face1.id })).toBe(JobStatus.Failed);
 
       expect(mocks.person.reassignFaces).not.toHaveBeenCalled();
       expect(mocks.person.create).not.toHaveBeenCalled();
@@ -860,7 +859,7 @@ describe(PersonService.name, () => {
     it('should skip if face already has an assigned person', async () => {
       mocks.person.getFaceForFacialRecognitionJob.mockResolvedValue(faceStub.face1);
 
-      expect(await sut.handleRecognizeFaces({ id: faceStub.face1.id })).toBe(JobStatus.SKIPPED);
+      expect(await sut.handleRecognizeFaces({ id: faceStub.face1.id })).toBe(JobStatus.Skipped);
 
       expect(mocks.person.reassignFaces).not.toHaveBeenCalled();
       expect(mocks.person.create).not.toHaveBeenCalled();
@@ -1009,7 +1008,7 @@ describe(PersonService.name, () => {
       await sut.handleRecognizeFaces({ id: faceStub.noPerson1.id });
 
       expect(mocks.job.queue).toHaveBeenCalledWith({
-        name: JobName.FACIAL_RECOGNITION,
+        name: JobName.FacialRecognition,
         data: { id: faceStub.noPerson1.id, deferred: true },
       });
       expect(mocks.search.searchFaces).toHaveBeenCalledTimes(1);
@@ -1034,114 +1033,6 @@ describe(PersonService.name, () => {
       expect(mocks.search.searchFaces).toHaveBeenCalledTimes(2);
       expect(mocks.person.create).not.toHaveBeenCalled();
       expect(mocks.person.reassignFaces).not.toHaveBeenCalled();
-    });
-  });
-
-  describe('handleGeneratePersonThumbnail', () => {
-    it('should skip if machine learning is disabled', async () => {
-      mocks.systemMetadata.get.mockResolvedValue(systemConfigStub.machineLearningDisabled);
-
-      await expect(sut.handleGeneratePersonThumbnail({ id: 'person-1' })).resolves.toBe(JobStatus.SKIPPED);
-      expect(mocks.asset.getByIds).not.toHaveBeenCalled();
-      expect(mocks.systemMetadata.get).toHaveBeenCalled();
-    });
-
-    it('should skip a person not found', async () => {
-      await sut.handleGeneratePersonThumbnail({ id: 'person-1' });
-      expect(mocks.media.generateThumbnail).not.toHaveBeenCalled();
-    });
-
-    it('should skip a person without a face asset id', async () => {
-      mocks.person.getById.mockResolvedValue(personStub.noThumbnail);
-      await sut.handleGeneratePersonThumbnail({ id: 'person-1' });
-      expect(mocks.media.generateThumbnail).not.toHaveBeenCalled();
-    });
-
-    it('should skip a person with face not found', async () => {
-      await sut.handleGeneratePersonThumbnail({ id: 'person-1' });
-      expect(mocks.media.generateThumbnail).not.toHaveBeenCalled();
-    });
-
-    it('should generate a thumbnail', async () => {
-      mocks.person.getDataForThumbnailGenerationJob.mockResolvedValue(personThumbnailStub.newThumbnailMiddle);
-      mocks.media.generateThumbnail.mockResolvedValue();
-
-      await sut.handleGeneratePersonThumbnail({ id: personStub.primaryPerson.id });
-
-      expect(mocks.person.getDataForThumbnailGenerationJob).toHaveBeenCalledWith(personStub.primaryPerson.id);
-      expect(mocks.storage.mkdirSync).toHaveBeenCalledWith('upload/thumbs/admin_id/pe/rs');
-      expect(mocks.media.generateThumbnail).toHaveBeenCalledWith(
-        assetStub.primaryImage.originalPath,
-        {
-          colorspace: Colorspace.P3,
-          format: ImageFormat.JPEG,
-          size: 250,
-          quality: 80,
-          crop: {
-            left: 238,
-            top: 163,
-            width: 274,
-            height: 274,
-          },
-          processInvalidImages: false,
-        },
-        'upload/thumbs/admin_id/pe/rs/person-1.jpeg',
-      );
-      expect(mocks.person.update).toHaveBeenCalledWith({
-        id: 'person-1',
-        thumbnailPath: 'upload/thumbs/admin_id/pe/rs/person-1.jpeg',
-      });
-    });
-
-    it('should generate a thumbnail without going negative', async () => {
-      mocks.person.getDataForThumbnailGenerationJob.mockResolvedValue(personThumbnailStub.newThumbnailStart);
-      mocks.media.generateThumbnail.mockResolvedValue();
-
-      await sut.handleGeneratePersonThumbnail({ id: personStub.primaryPerson.id });
-
-      expect(mocks.media.generateThumbnail).toHaveBeenCalledWith(
-        assetStub.primaryImage.originalPath,
-        {
-          colorspace: Colorspace.P3,
-          format: ImageFormat.JPEG,
-          size: 250,
-          quality: 80,
-          crop: {
-            left: 0,
-            top: 85,
-            width: 510,
-            height: 510,
-          },
-          processInvalidImages: false,
-        },
-        'upload/thumbs/admin_id/pe/rs/person-1.jpeg',
-      );
-    });
-
-    it('should generate a thumbnail without overflowing', async () => {
-      mocks.person.getDataForThumbnailGenerationJob.mockResolvedValue(personThumbnailStub.newThumbnailEnd);
-      mocks.person.update.mockResolvedValue(personStub.primaryPerson);
-      mocks.media.generateThumbnail.mockResolvedValue();
-
-      await sut.handleGeneratePersonThumbnail({ id: personStub.primaryPerson.id });
-
-      expect(mocks.media.generateThumbnail).toHaveBeenCalledWith(
-        assetStub.primaryImage.originalPath,
-        {
-          colorspace: Colorspace.P3,
-          format: ImageFormat.JPEG,
-          size: 250,
-          quality: 80,
-          crop: {
-            left: 591,
-            top: 591,
-            width: 408,
-            height: 408,
-          },
-          processInvalidImages: false,
-        },
-        'upload/thumbs/admin_id/pe/rs/person-1.jpeg',
-      );
     });
   });
 
@@ -1270,7 +1161,7 @@ describe(PersonService.name, () => {
         id: faceStub.face1.id,
         imageHeight: 1024,
         imageWidth: 1024,
-        sourceType: SourceType.MACHINE_LEARNING,
+        sourceType: SourceType.MachineLearning,
         person: mapPerson(personStub.withName),
       });
     });

@@ -3,7 +3,7 @@ import { Page, expect, test } from '@playwright/test';
 import { utils } from 'src/utils';
 
 function imageLocator(page: Page) {
-  return page.getByAltText('Image taken on').locator('visible=true');
+  return page.getByAltText('Image taken').locator('visible=true');
 }
 test.describe('Photo Viewer', () => {
   let admin: LoginResponseDto;
@@ -21,21 +21,7 @@ test.describe('Photo Viewer', () => {
   test.beforeEach(async ({ context, page }) => {
     // before each test, login as user
     await utils.setAuthCookies(context, admin.accessToken);
-    await page.goto('/photos');
     await page.waitForLoadState('networkidle');
-  });
-
-  test('initially shows a loading spinner', async ({ page }) => {
-    await page.route(`/api/assets/${asset.id}/thumbnail**`, async (route) => {
-      // slow down the request for thumbnail, so spinner has chance to show up
-      await new Promise((f) => setTimeout(f, 2000));
-      await route.continue();
-    });
-    await page.goto(`/photos/${asset.id}`);
-    await page.waitForLoadState('load');
-    // this is the spinner
-    await page.waitForSelector('svg[role=status]');
-    await expect(page.getByTestId('loading-spinner')).toBeVisible();
   });
 
   test('loads original photo when zoomed', async ({ page }) => {

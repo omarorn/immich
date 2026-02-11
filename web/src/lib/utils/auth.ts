@@ -1,20 +1,17 @@
 import { browser } from '$app/environment';
-import { goto } from '$app/navigation';
-import { foldersStore } from '$lib/stores/folders.svelte';
-import { memoryStore } from '$lib/stores/memory.store.svelte';
+import { eventManager } from '$lib/managers/event-manager.svelte';
+import { Route } from '$lib/route';
 import { purchaseStore } from '$lib/stores/purchase.store';
-import { searchStore } from '$lib/stores/search.svelte';
-import { preferences as preferences$, resetSavedUser, user as user$ } from '$lib/stores/user.store';
-import { resetUserInteraction, userInteraction } from '$lib/stores/user.svelte';
+import { preferences as preferences$, user as user$ } from '$lib/stores/user.store';
+import { userInteraction } from '$lib/stores/user.svelte';
 import { getAboutInfo, getMyPreferences, getMyUser, getStorage } from '@immich/sdk';
 import { redirect } from '@sveltejs/kit';
 import { DateTime } from 'luxon';
 import { get } from 'svelte/store';
-import { AppRoute } from '../constants';
 
 export interface AuthOptions {
   admin?: true;
-  public?: true;
+  public?: boolean;
 }
 
 export const loadUser = async () => {
@@ -27,6 +24,8 @@ export const loadUser = async () => {
       [user, preferences, serverInfo] = await Promise.all([getMyUser(), getMyPreferences(), getAboutInfo()]);
       user$.set(user);
       preferences$.set(preferences);
+
+      eventManager.emit('AuthUserLoaded', user);
 
       // Check for license status
       if (serverInfo.licensed || user.license?.activatedAt) {
@@ -54,7 +53,7 @@ const hasAuthCookie = (): boolean => {
   return false;
 };
 
-export const authenticate = async (options?: AuthOptions) => {
+export const authenticate = async (url: URL, options?: AuthOptions) => {
   const { public: publicRoute, admin: adminRoute } = options || {};
   const user = await loadUser();
 
@@ -63,11 +62,11 @@ export const authenticate = async (options?: AuthOptions) => {
   }
 
   if (!user) {
-    redirect(302, AppRoute.AUTH_LOGIN);
+    redirect(307, Route.login({ continue: url.pathname + url.search }));
   }
 
   if (adminRoute && !user.isAdmin) {
-    redirect(302, AppRoute.PHOTOS);
+    redirect(307, Route.photos());
   }
 };
 
@@ -90,20 +89,4 @@ export const getAccountAge = (): number => {
   const accountAge = now.diff(createdDate, 'days').days.toFixed(0);
 
   return Number(accountAge);
-};
-
-export const handleLogout = async (redirectUri: string) => {
-  try {
-    if (redirectUri.startsWith('/')) {
-      await goto(redirectUri);
-    } else {
-      globalThis.location.href = redirectUri;
-    }
-  } finally {
-    resetSavedUser();
-    resetUserInteraction();
-    foldersStore.clearCache();
-    memoryStore.clearCache();
-    searchStore.clearCache();
-  }
 };

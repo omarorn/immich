@@ -1,25 +1,19 @@
-import { resetSavedUser, user as userStore } from '$lib/stores/user.store';
+import { preferences as preferencesStore, resetSavedUser, user as userStore } from '$lib/stores/user.store';
+import { renderWithTooltips } from '$tests/helpers';
 import { assetFactory } from '@test-data/factories/asset-factory';
+import { preferencesFactory } from '@test-data/factories/preferences-factory';
 import { userAdminFactory } from '@test-data/factories/user-factory';
 import '@testing-library/jest-dom';
-import { render } from '@testing-library/svelte';
 import AssetViewerNavBar from './asset-viewer-nav-bar.svelte';
 
 describe('AssetViewerNavBar component', () => {
   const additionalProps = {
-    showCopyButton: false,
-    showZoomButton: false,
-    showDetailButton: false,
-    showDownloadButton: false,
-    showMotionPlayButton: false,
-    showShareButton: false,
-    onZoomImage: () => {},
-    onCopyImage: () => {},
+    preAction: () => {},
     onAction: () => {},
-    onRunJob: () => {},
     onPlaySlideshow: () => {},
-    onShowDetail: () => {},
     onClose: () => {},
+    playOriginalVideo: false,
+    setPlayOriginalVideo: () => Promise.resolve(),
   };
 
   beforeAll(() => {
@@ -30,6 +24,16 @@ describe('AssetViewerNavBar component', () => {
       'ResizeObserver',
       vi.fn(() => ({ observe: vi.fn(), unobserve: vi.fn(), disconnect: vi.fn() })),
     );
+    vi.mock(import('$lib/managers/feature-flags-manager.svelte'), () => {
+      return {
+        featureFlagsManager: {
+          init: vi.fn(),
+          loadFeatureFlags: vi.fn(),
+          value: { trash: true, smartSearch: true },
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        } as any,
+      };
+    });
   });
 
   afterEach(() => {
@@ -41,9 +45,12 @@ describe('AssetViewerNavBar component', () => {
   });
 
   it('shows back button', () => {
+    const prefs = preferencesFactory.build({ cast: { gCastEnabled: false } });
+    preferencesStore.set(prefs);
+
     const asset = assetFactory.build({ isTrashed: false });
-    const { getByTitle } = render(AssetViewerNavBar, { asset, ...additionalProps });
-    expect(getByTitle('go_back')).toBeInTheDocument();
+    const { getByLabelText } = renderWithTooltips(AssetViewerNavBar, { asset, ...additionalProps });
+    expect(getByLabelText('go_back')).toBeInTheDocument();
   });
 
   describe('if the current user owns the asset', () => {
@@ -52,8 +59,12 @@ describe('AssetViewerNavBar component', () => {
       const user = userAdminFactory.build({ id: ownerId });
       const asset = assetFactory.build({ ownerId, isTrashed: false });
       userStore.set(user);
-      const { getByTitle } = render(AssetViewerNavBar, { asset, ...additionalProps });
-      expect(getByTitle('delete')).toBeInTheDocument();
+
+      const prefs = preferencesFactory.build({ cast: { gCastEnabled: false } });
+      preferencesStore.set(prefs);
+
+      const { getByLabelText } = renderWithTooltips(AssetViewerNavBar, { asset, ...additionalProps });
+      expect(getByLabelText('delete')).toBeInTheDocument();
     });
   });
 });

@@ -1,12 +1,8 @@
+import { eventManager } from '$lib/managers/event-manager.svelte';
+import type { TimelineAsset } from '$lib/managers/timeline-manager/types';
 import { asLocalTimeISO } from '$lib/utils/date-time';
-import {
-  type AssetResponseDto,
-  deleteMemory,
-  type MemoryResponseDto,
-  removeMemoryAssets,
-  searchMemories,
-  updateMemory,
-} from '@immich/sdk';
+import { toTimelineAsset } from '$lib/utils/timeline-util';
+import { deleteMemory, type MemoryResponseDto, removeMemoryAssets, searchMemories, updateMemory } from '@immich/sdk';
 import { DateTime } from 'luxon';
 
 type MemoryIndex = {
@@ -16,7 +12,7 @@ type MemoryIndex = {
 
 export type MemoryAsset = MemoryIndex & {
   memory: MemoryResponseDto;
-  asset: AssetResponseDto;
+  asset: TimelineAsset;
   previousMemory?: MemoryResponseDto;
   previous?: MemoryAsset;
   next?: MemoryAsset;
@@ -24,8 +20,20 @@ export type MemoryAsset = MemoryIndex & {
 };
 
 class MemoryStoreSvelte {
+  #loading: Promise<void> | undefined;
+
+  constructor() {
+    eventManager.onMany({
+      AuthLogout: () => this.clearCache(),
+      AuthUserLoaded: () => this.initialize(),
+    });
+  }
+
+  ready() {
+    return this.initialize();
+  }
+
   memories = $state<MemoryResponseDto[]>([]);
-  private initialized = false;
   private memoryAssets = $derived.by(() => {
     const memoryAssets: MemoryAsset[] = [];
     let previous: MemoryAsset | undefined;
@@ -36,7 +44,7 @@ class MemoryStoreSvelte {
           memoryIndex,
           previousMemory: this.memories[memoryIndex - 1],
           nextMemory: this.memories[memoryIndex + 1],
-          asset,
+          asset: toTimelineAsset(asset),
           assetIndex,
           previous,
         };
@@ -101,21 +109,20 @@ class MemoryStoreSvelte {
     }
   }
 
-  async initialize() {
-    if (this.initialized) {
-      return;
-    }
-    this.initialized = true;
-
-    await this.loadAllMemories();
-  }
-
-  clearCache() {
-    this.initialized = false;
+  private clearCache() {
+    this.#loading = undefined;
     this.memories = [];
   }
 
-  private async loadAllMemories() {
+  private initialize() {
+    if (!this.#loading) {
+      this.#loading = this.load();
+    }
+
+    return this.#loading;
+  }
+
+  private async load() {
     const memories = await searchMemories({ $for: asLocalTimeISO(DateTime.now()) });
     this.memories = memories.filter((memory) => memory.assets.length > 0);
   }

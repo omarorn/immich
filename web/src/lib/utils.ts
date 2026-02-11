@@ -1,12 +1,14 @@
-import { NotificationType, notificationController } from '$lib/components/shared-components/notification/notification';
 import { defaultLang, langs, locales } from '$lib/constants';
-import { lang } from '$lib/stores/preferences.store';
+import { authManager } from '$lib/managers/auth-manager.svelte';
+import { alwaysLoadOriginalFile, lang } from '$lib/stores/preferences.store';
+import { isWebCompatibleImage } from '$lib/utils/asset-utils';
 import { handleError } from '$lib/utils/handle-error';
 import {
   AssetJobName,
   AssetMediaSize,
-  JobName,
+  AssetTypeEnum,
   MemoryType,
+  QueueName,
   finishOAuth,
   getAssetOriginalPath,
   getAssetPlaybackPath,
@@ -17,13 +19,16 @@ import {
   linkOAuthAccount,
   startOAuth,
   unlinkOAuthAccount,
+  type AssetResponseDto,
   type MemoryResponseDto,
   type PersonResponseDto,
+  type ServerVersionResponseDto,
   type SharedLinkResponseDto,
   type UserResponseDto,
 } from '@immich/sdk';
+import { toastManager, type ActionItem, type IfLike } from '@immich/ui';
 import { mdiCogRefreshOutline, mdiDatabaseRefreshOutline, mdiHeadSyncOutline, mdiImageRefreshOutline } from '@mdi/js';
-import { init, register, t } from 'svelte-i18n';
+import { init, register, t, type MessageFormatter } from 'svelte-i18n';
 import { derived, get } from 'svelte/store';
 
 interface DownloadRequestOptions<T = unknown> {
@@ -32,6 +37,12 @@ interface DownloadRequestOptions<T = unknown> {
   data?: T;
   signal?: AbortSignal;
   onDownloadProgress?: (event: ProgressEvent<XMLHttpRequestEventTarget>) => void;
+}
+
+interface DateFormatter {
+  formatDate: (date: Date) => string;
+  formatTime: (date: Date) => string;
+  formatDateTime: (date: Date) => string;
 }
 
 export const initLanguage = async () => {
@@ -51,20 +62,24 @@ interface UploadRequestOptions {
 }
 
 export class AbortError extends Error {
-  name = 'AbortError';
+  override name = 'AbortError';
 }
 
 class ApiError extends Error {
-  name = 'ApiError';
+  override name = 'ApiError';
 
   constructor(
-    public message: string,
+    public override message: string,
     public statusCode: number,
     public details: string,
   ) {
     super(message);
   }
 }
+
+export const sleep = (ms: number) => {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+};
 
 export const uploadRequest = async <T>(options: UploadRequestOptions): Promise<{ data: T; status: number }> => {
   const { onUploadProgress: onProgress, data, url } = options;
@@ -131,41 +146,37 @@ export const downloadRequest = <TBody = unknown>(options: DownloadRequestOptions
   });
 };
 
-export const getJobName = derived(t, ($t) => {
-  return (jobName: JobName) => {
-    const names: Record<JobName, string> = {
-      [JobName.ThumbnailGeneration]: $t('admin.thumbnail_generation_job'),
-      [JobName.MetadataExtraction]: $t('admin.metadata_extraction_job'),
-      [JobName.Sidecar]: $t('admin.sidecar_job'),
-      [JobName.SmartSearch]: $t('admin.machine_learning_smart_search'),
-      [JobName.DuplicateDetection]: $t('admin.machine_learning_duplicate_detection'),
-      [JobName.FaceDetection]: $t('admin.face_detection'),
-      [JobName.FacialRecognition]: $t('admin.machine_learning_facial_recognition'),
-      [JobName.VideoConversion]: $t('admin.video_conversion_job'),
-      [JobName.StorageTemplateMigration]: $t('admin.storage_template_migration'),
-      [JobName.Migration]: $t('admin.migration_job'),
-      [JobName.BackgroundTask]: $t('admin.background_task_job'),
-      [JobName.Search]: $t('search'),
-      [JobName.Library]: $t('external_libraries'),
-      [JobName.Notifications]: $t('notifications'),
-      [JobName.BackupDatabase]: $t('admin.backup_database'),
+export const getQueueName = derived(t, ($t) => {
+  return (name: QueueName) => {
+    const names: Record<QueueName, string> = {
+      [QueueName.ThumbnailGeneration]: $t('admin.thumbnail_generation_job'),
+      [QueueName.MetadataExtraction]: $t('admin.metadata_extraction_job'),
+      [QueueName.Sidecar]: $t('admin.sidecar_job'),
+      [QueueName.SmartSearch]: $t('admin.machine_learning_smart_search'),
+      [QueueName.DuplicateDetection]: $t('admin.machine_learning_duplicate_detection'),
+      [QueueName.FaceDetection]: $t('admin.face_detection'),
+      [QueueName.FacialRecognition]: $t('admin.machine_learning_facial_recognition'),
+      [QueueName.VideoConversion]: $t('admin.video_conversion_job'),
+      [QueueName.StorageTemplateMigration]: $t('admin.storage_template_migration'),
+      [QueueName.Migration]: $t('admin.migration_job'),
+      [QueueName.BackgroundTask]: $t('admin.background_task_job'),
+      [QueueName.Search]: $t('search'),
+      [QueueName.Library]: $t('external_libraries'),
+      [QueueName.Notifications]: $t('notifications'),
+      [QueueName.BackupDatabase]: $t('admin.backup_database'),
+      [QueueName.Ocr]: $t('admin.machine_learning_ocr'),
+      [QueueName.Workflow]: $t('workflows'),
+      [QueueName.Editor]: $t('editor'),
     };
 
-    return names[jobName];
+    return names[name];
   };
 });
 
-let _key: string | undefined;
 let _sharedLink: SharedLinkResponseDto | undefined;
 
-export const setKey = (key?: string) => (_key = key);
-export const getKey = (): string | undefined => _key;
 export const setSharedLink = (sharedLink: SharedLinkResponseDto) => (_sharedLink = sharedLink);
 export const getSharedLink = (): SharedLinkResponseDto | undefined => _sharedLink;
-
-export const isSharedLink = () => {
-  return !!_key;
-};
 
 const createUrl = (path: string, parameters?: Record<string, unknown>) => {
   const searchParameters = new URLSearchParams();
@@ -182,30 +193,50 @@ const createUrl = (path: string, parameters?: Record<string, unknown>) => {
   return getBaseUrl() + url.pathname + url.search + url.hash;
 };
 
-type AssetUrlOptions = { id: string; cacheKey?: string | null };
+type AssetUrlOptions = { id: string; cacheKey?: string | null; edited?: boolean; size?: AssetMediaSize };
 
-export const getAssetOriginalUrl = (options: string | AssetUrlOptions) => {
-  if (typeof options === 'string') {
-    options = { id: options };
+export const getAssetUrl = ({
+  asset,
+  sharedLink,
+  forceOriginal = false,
+}: {
+  asset: AssetResponseDto | undefined;
+  sharedLink?: SharedLinkResponseDto;
+  forceOriginal?: boolean;
+}) => {
+  if (!asset) {
+    return;
   }
-  const { id, cacheKey } = options;
-  return createUrl(getAssetOriginalPath(id), { key: getKey(), c: cacheKey });
+  const id = asset.id;
+  const cacheKey = asset.thumbhash;
+  if (sharedLink && (!sharedLink.allowDownload || !sharedLink.showMetadata)) {
+    return getAssetMediaUrl({ id, size: AssetMediaSize.Preview, cacheKey });
+  }
+  const size = targetImageSize(asset, forceOriginal);
+  return getAssetMediaUrl({ id, size, cacheKey });
 };
 
-export const getAssetThumbnailUrl = (options: string | (AssetUrlOptions & { size?: AssetMediaSize })) => {
-  if (typeof options === 'string') {
-    options = { id: options };
-  }
-  const { id, size, cacheKey } = options;
-  return createUrl(getAssetThumbnailPath(id), { size, key: getKey(), c: cacheKey });
+const forceUseOriginal = (asset: AssetResponseDto) => {
+  return asset.type === AssetTypeEnum.Image && asset.duration && !asset.duration.includes('0:00:00.000');
 };
 
-export const getAssetPlaybackUrl = (options: string | AssetUrlOptions) => {
-  if (typeof options === 'string') {
-    options = { id: options };
+export const targetImageSize = (asset: AssetResponseDto, forceOriginal: boolean) => {
+  if (forceOriginal || get(alwaysLoadOriginalFile) || forceUseOriginal(asset)) {
+    return isWebCompatibleImage(asset) ? AssetMediaSize.Original : AssetMediaSize.Fullsize;
   }
-  const { id, cacheKey } = options;
-  return createUrl(getAssetPlaybackPath(id), { key: getKey(), c: cacheKey });
+  return AssetMediaSize.Preview;
+};
+
+export const getAssetMediaUrl = (options: AssetUrlOptions) => {
+  const { id, size, cacheKey: c, edited = true } = options;
+  const isOriginal = size === AssetMediaSize.Original;
+  const path = isOriginal ? getAssetOriginalPath(id) : getAssetThumbnailPath(id);
+  return createUrl(path, { ...authManager.params, size: isOriginal ? undefined : size, c, edited });
+};
+
+export const getAssetPlaybackUrl = (options: AssetUrlOptions) => {
+  const { id, cacheKey: c } = options;
+  return createUrl(getAssetPlaybackPath(id), { ...authManager.params, c });
 };
 
 export const getProfileImageUrl = (user: UserResponseDto) =>
@@ -214,31 +245,16 @@ export const getProfileImageUrl = (user: UserResponseDto) =>
 export const getPeopleThumbnailUrl = (person: PersonResponseDto, updatedAt?: string) =>
   createUrl(getPeopleThumbnailPath(person.id), { updatedAt: updatedAt ?? person.updatedAt });
 
-export const getAssetJobName = derived(t, ($t) => {
-  return (job: AssetJobName) => {
-    const names: Record<AssetJobName, string> = {
-      [AssetJobName.RefreshFaces]: $t('refresh_faces'),
-      [AssetJobName.RefreshMetadata]: $t('refresh_metadata'),
-      [AssetJobName.RegenerateThumbnail]: $t('refresh_thumbnails'),
-      [AssetJobName.TranscodeVideo]: $t('refresh_encoded_videos'),
-    };
-
-    return names[job];
+export const getAssetJobName = ($t: MessageFormatter, job: AssetJobName) => {
+  const messages: Record<AssetJobName, string> = {
+    [AssetJobName.RefreshFaces]: $t('refreshing_faces'),
+    [AssetJobName.RefreshMetadata]: $t('refreshing_metadata'),
+    [AssetJobName.RegenerateThumbnail]: $t('regenerating_thumbnails'),
+    [AssetJobName.TranscodeVideo]: $t('refreshing_encoded_video'),
   };
-});
 
-export const getAssetJobMessage = derived(t, ($t) => {
-  return (job: AssetJobName) => {
-    const messages: Record<AssetJobName, string> = {
-      [AssetJobName.RefreshFaces]: $t('refreshing_faces'),
-      [AssetJobName.RefreshMetadata]: $t('refreshing_metadata'),
-      [AssetJobName.RegenerateThumbnail]: $t('regenerating_thumbnails'),
-      [AssetJobName.TranscodeVideo]: $t('refreshing_encoded_video'),
-    };
-
-    return messages[job];
-  };
-});
+  return messages[job];
+};
 
 export const getAssetJobIcon = (job: AssetJobName) => {
   const names: Record<AssetJobName, string> = {
@@ -256,14 +272,10 @@ export const copyToClipboard = async (secret: string) => {
 
   try {
     await navigator.clipboard.writeText(secret);
-    notificationController.show({ message: $t('copied_to_clipboard'), type: NotificationType.Info });
+    toastManager.info($t('copied_to_clipboard'));
   } catch (error) {
     handleError(error, $t('errors.unable_to_copy_to_clipboard'));
   }
-};
-
-export const makeSharedLinkUrl = (externalDomain: string, key: string) => {
-  return new URL(`share/${key}`, externalDomain || globalThis.location.origin).href;
 };
 
 export const oauth = {
@@ -279,6 +291,10 @@ export const oauth = {
       }
     }
     return false;
+  },
+  isAutoLaunchEnabled: (location: Location) => {
+    const value = 'autoLaunch=1';
+    return location.search.includes(value);
   },
   authorize: async (location: Location) => {
     const $t = get(t);
@@ -343,3 +359,75 @@ export const withError = async <T>(fn: () => Promise<T>): Promise<[undefined, T]
 
 // eslint-disable-next-line unicorn/prefer-code-point
 export const decodeBase64 = (data: string) => Uint8Array.from(atob(data), (c) => c.charCodeAt(0));
+
+export function createDateFormatter(localeCode: string | undefined): DateFormatter {
+  return {
+    formatDate: (date: Date): string =>
+      date.toLocaleString(localeCode, {
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+      }),
+
+    formatTime: (date: Date): string =>
+      date.toLocaleString(localeCode, {
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+      }),
+
+    formatDateTime: (date: Date): string => {
+      const formattedDate = date.toLocaleString(localeCode, {
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+      });
+      const formattedTime = date.toLocaleString(localeCode, {
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+      });
+      return `${formattedDate} ${formattedTime}`;
+    },
+  };
+}
+
+export const getReleaseType = (
+  current: ServerVersionResponseDto,
+  newVersion: ServerVersionResponseDto,
+): 'major' | 'minor' | 'patch' | 'none' => {
+  if (current.major !== newVersion.major) {
+    return 'major';
+  }
+
+  if (current.minor !== newVersion.minor) {
+    return 'minor';
+  }
+
+  if (current.patch !== newVersion.patch) {
+    return 'patch';
+  }
+
+  return 'none';
+};
+
+export const semverToName = ({ major, minor, patch }: ServerVersionResponseDto) => `v${major}.${minor}.${patch}`;
+
+export const withoutIcons = (actions: ActionItem[]): ActionItem[] =>
+  actions.map((action) => ({ ...action, icon: undefined }));
+
+export const isEnabled = ({ $if }: IfLike) => $if?.() ?? true;
+
+export const transformToTitleCase = (text: string) => {
+  if (text.length === 0) {
+    return text;
+  } else if (text.length === 1) {
+    return text.charAt(0).toUpperCase();
+  }
+
+  let result = '';
+  for (const word of text.toLowerCase().split(' ')) {
+    result += word.charAt(0).toUpperCase() + word.slice(1) + ' ';
+  }
+  return result.trim();
+};

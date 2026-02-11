@@ -7,7 +7,8 @@ import { Writable } from 'node:stream';
 import sharp from 'sharp';
 import { ORIENTATION_TO_SHARP_ROTATION } from 'src/constants';
 import { Exif } from 'src/database';
-import { Colorspace, LogLevel } from 'src/enum';
+import { AssetEditActionItem } from 'src/dtos/editing.dto';
+import { Colorspace, LogLevel, RawExtractedFormat } from 'src/enum';
 import { LoggingRepository } from 'src/repositories/logging.repository';
 import {
   DecodeToBufferOptions,
@@ -19,6 +20,7 @@ import {
   VideoInfo,
 } from 'src/types';
 import { handlePromiseError } from 'src/utils/misc';
+import { createAffineMatrix } from 'src/utils/transform';
 
 const probe = (input: string, options: string[]): Promise<FfprobeData> =>
   new Promise((resolve, reject) =>
@@ -36,34 +38,51 @@ type ProgressEvent = {
   percent?: number;
 };
 
+export type ExtractResult = {
+  buffer: Buffer;
+  format: RawExtractedFormat;
+};
+
 @Injectable()
 export class MediaRepository {
   constructor(private logger: LoggingRepository) {
     this.logger.setContext(MediaRepository.name);
   }
 
-  async extract(input: string, output: string): Promise<boolean> {
+  /**
+   *
+   * @param input file path to the input image
+   * @returns ExtractResult if succeeded, or null if failed
+   */
+  async extract(input: string): Promise<ExtractResult | null> {
     try {
-      // remove existing output file if it exists
-      // as exiftool-vendored does not support overwriting via "-w!" flag
-      // and throws "1 files could not be read" error when the output file exists
-      await fs.unlink(output).catch(() => null);
-      await exiftool.extractBinaryTag('JpgFromRaw2', input, output);
-    } catch {
-      try {
-        this.logger.debug('Extracting JPEG from RAW image:', input);
-        await exiftool.extractJpgFromRaw(input, output);
-      } catch (error: any) {
-        this.logger.debug('Could not extract JPEG from image, trying preview', error.message);
-        try {
-          await exiftool.extractPreview(input, output);
-        } catch (error: any) {
-          this.logger.debug('Could not extract preview from image', error.message);
-          return false;
-        }
-      }
+      const buffer = await exiftool.extractBinaryTagToBuffer('JpgFromRaw2', input);
+      return { buffer, format: RawExtractedFormat.Jpeg };
+    } catch (error: any) {
+      this.logger.debug(`Could not extract JpgFromRaw2 buffer from image, trying JPEG from RAW next: ${error}`);
     }
-    return true;
+
+    try {
+      const buffer = await exiftool.extractBinaryTagToBuffer('JpgFromRaw', input);
+      return { buffer, format: RawExtractedFormat.Jpeg };
+    } catch (error: any) {
+      this.logger.debug(`Could not extract JPEG buffer from image, trying PreviewJXL next: ${error}`);
+    }
+
+    try {
+      const buffer = await exiftool.extractBinaryTagToBuffer('PreviewJXL', input);
+      return { buffer, format: RawExtractedFormat.Jxl };
+    } catch (error: any) {
+      this.logger.debug(`Could not extract PreviewJXL buffer from image, trying PreviewImage next: ${error}`);
+    }
+
+    try {
+      const buffer = await exiftool.extractBinaryTagToBuffer('PreviewImage', input);
+      return { buffer, format: RawExtractedFormat.Jpeg };
+    } catch (error: any) {
+      this.logger.debug(`Could not extract preview buffer from image: ${error}`);
+      return null;
+    }
   }
 
   async writeExif(tags: Partial<Exif>, output: string): Promise<boolean> {
@@ -104,28 +123,74 @@ export class MediaRepository {
     }
   }
 
-  decodeImage(input: string, options: DecodeToBufferOptions) {
-    return this.getImageDecodingPipeline(input, options).raw().toBuffer({ resolveWithObject: true });
+  async copyTagGroup(tagGroup: string, source: string, target: string): Promise<boolean> {
+    try {
+      await exiftool.write(
+        target,
+        {},
+        {
+          ignoreMinorErrors: true,
+          writeArgs: ['-TagsFromFile', source, `-${tagGroup}:all>${tagGroup}:all`, '-overwrite_original'],
+        },
+      );
+      return true;
+    } catch (error: any) {
+      this.logger.warn(`Could not copy tag data to image: ${error.message}`);
+      return false;
+    }
+  }
+
+  async decodeImage(input: string | Buffer, options: DecodeToBufferOptions) {
+    const pipeline = await this.getImageDecodingPipeline(input, options);
+    return pipeline.raw().toBuffer({ resolveWithObject: true });
+  }
+
+  private async applyEdits(pipeline: sharp.Sharp, edits: AssetEditActionItem[]): Promise<sharp.Sharp> {
+    const affineEditOperations = edits.filter((edit) => edit.action !== 'crop');
+    const matrix = createAffineMatrix(affineEditOperations);
+
+    const crop = edits.find((edit) => edit.action === 'crop');
+    const dimensions = await pipeline.metadata();
+
+    if (crop) {
+      pipeline = pipeline.extract({
+        left: crop ? Math.round(crop.parameters.x) : 0,
+        top: crop ? Math.round(crop.parameters.y) : 0,
+        width: crop ? Math.round(crop.parameters.width) : dimensions.width || 0,
+        height: crop ? Math.round(crop.parameters.height) : dimensions.height || 0,
+      });
+    }
+
+    const { a, b, c, d } = matrix;
+    pipeline = pipeline.affine([
+      [a, b],
+      [c, d],
+    ]);
+
+    return pipeline;
   }
 
   async generateThumbnail(input: string | Buffer, options: GenerateThumbnailOptions, output: string): Promise<void> {
-    await this.getImageDecodingPipeline(input, options)
-      .toFormat(options.format, {
-        quality: options.quality,
-        // this is default in libvips (except the threshold is 90), but we need to set it manually in sharp
-        chromaSubsampling: options.quality >= 80 ? '4:4:4' : '4:2:0',
-      })
-      .toFile(output);
+    const pipeline = await this.getImageDecodingPipeline(input, options);
+    const decoded = pipeline.toFormat(options.format, {
+      quality: options.quality,
+      // this is default in libvips (except the threshold is 90), but we need to set it manually in sharp
+      chromaSubsampling: options.quality >= 80 ? '4:4:4' : '4:2:0',
+      progressive: options.progressive,
+    });
+
+    await decoded.toFile(output);
   }
 
-  private getImageDecodingPipeline(input: string | Buffer, options: DecodeToBufferOptions) {
+  private async getImageDecodingPipeline(input: string | Buffer, options: DecodeToBufferOptions) {
     let pipeline = sharp(input, {
       // some invalid images can still be processed by sharp, but we want to fail on them by default to avoid crashes
       failOn: options.processInvalidImages ? 'none' : 'error',
       limitInputPixels: false,
       raw: options.raw,
+      unlimited: true,
     })
-      .pipelineColorspace(options.colorspace === Colorspace.SRGB ? 'srgb' : 'rgb16')
+      .pipelineColorspace(options.colorspace === Colorspace.Srgb ? 'srgb' : 'rgb16')
       .withIccProfile(options.colorspace);
 
     if (!options.raw) {
@@ -140,8 +205,8 @@ export class MediaRepository {
       }
     }
 
-    if (options.crop) {
-      pipeline = pipeline.extract(options.crop);
+    if (options.edits && options.edits.length > 0) {
+      pipeline = await this.applyEdits(pipeline, options.edits);
     }
 
     if (options.size !== undefined) {
@@ -151,14 +216,20 @@ export class MediaRepository {
   }
 
   async generateThumbhash(input: string | Buffer, options: GenerateThumbhashOptions): Promise<Buffer> {
-    const [{ rgbaToThumbHash }, { data, info }] = await Promise.all([
+    const [{ rgbaToThumbHash }, decodingPipeline] = await Promise.all([
       import('thumbhash'),
-      sharp(input, options)
-        .resize(100, 100, { fit: 'inside', withoutEnlargement: true })
-        .raw()
-        .ensureAlpha()
-        .toBuffer({ resolveWithObject: true }),
+      this.getImageDecodingPipeline(input, {
+        colorspace: options.colorspace,
+        processInvalidImages: options.processInvalidImages,
+        raw: options.raw,
+        edits: options.edits,
+      }),
     ]);
+
+    const pipeline = decodingPipeline.resize(100, 100, { fit: 'inside', withoutEnlargement: true }).raw().ensureAlpha();
+
+    const { data, info } = await pipeline.toBuffer({ resolveWithObject: true });
+
     return Buffer.from(rgbaToThumbHash(info.width, info.height, data));
   }
 
@@ -185,6 +256,9 @@ export class MediaRepository {
           isHDR: stream.color_transfer === 'smpte2084' || stream.color_transfer === 'arib-std-b67',
           bitrate: this.parseInt(stream.bit_rate),
           pixelFormat: stream.pix_fmt || 'yuv420p',
+          colorPrimaries: stream.color_primaries,
+          colorSpace: stream.color_space,
+          colorTransfer: stream.color_transfer,
         })),
       audioStreams: results.streams
         .filter((stream) => stream.codec_type === 'audio')
@@ -192,7 +266,7 @@ export class MediaRepository {
           index: stream.index,
           codecType: stream.codec_type,
           codecName: stream.codec_name,
-          frameCount: this.parseInt(options?.countFrames ? stream.nb_read_packets : stream.nb_frames),
+          bitrate: this.parseInt(stream.bit_rate),
         })),
     };
   }
@@ -235,7 +309,7 @@ export class MediaRepository {
     });
   }
 
-  async getImageDimensions(input: string): Promise<ImageDimensions> {
+  async getImageDimensions(input: string | Buffer): Promise<ImageDimensions> {
     const { width = 0, height = 0 } = await sharp(input).metadata();
     return { width, height };
   }
@@ -250,7 +324,7 @@ export class MediaRepository {
 
     const { frameCount, percentInterval } = options.progress;
     const frameInterval = Math.ceil(frameCount / (100 / percentInterval));
-    if (this.logger.isLevelEnabled(LogLevel.DEBUG) && frameCount && frameInterval) {
+    if (this.logger.isLevelEnabled(LogLevel.Debug) && frameCount && frameInterval) {
       let lastProgressFrame: number = 0;
       ffmpegCall.on('progress', (progress: ProgressEvent) => {
         if (progress.frames - lastProgressFrame < frameInterval) {

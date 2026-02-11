@@ -3,22 +3,22 @@
 </script>
 
 <script lang="ts">
-  import { openFileUploadDialog } from '$lib/utils/file-uploader';
-  import NavigationBar from '../shared-components/navigation-bar/navigation-bar.svelte';
-  import SideBar from '../shared-components/side-bar/side-bar.svelte';
-  import AdminSideBar from '../shared-components/side-bar/admin-side-bar.svelte';
   import { useActions, type ActionArray } from '$lib/actions/use-actions';
+  import NavigationBar from '$lib/components/shared-components/navigation-bar/navigation-bar.svelte';
+  import UserSidebar from '$lib/components/shared-components/side-bar/user-sidebar.svelte';
+  import type { HeaderButtonActionItem } from '$lib/types';
+  import { openFileUploadDialog } from '$lib/utils/file-uploader';
+  import { Button, ContextMenuButton, HStack, isMenuItemType, type MenuItemType } from '@immich/ui';
   import type { Snippet } from 'svelte';
+  import { t } from 'svelte-i18n';
 
   interface Props {
     hideNavbar?: boolean;
-    showUploadButton?: boolean;
     title?: string | undefined;
     description?: string | undefined;
     scrollbar?: boolean;
-    admin?: boolean;
     use?: ActionArray;
-    header?: Snippet;
+    actions?: Array<HeaderButtonActionItem | MenuItemType>;
     sidebar?: Snippet;
     buttons?: Snippet;
     children?: Snippet;
@@ -26,58 +26,83 @@
 
   let {
     hideNavbar = false,
-    showUploadButton = false,
     title = undefined,
     description = undefined,
     scrollbar = true,
-    admin = false,
     use = [],
-    header,
+    actions = [],
     sidebar,
     buttons,
     children,
   }: Props = $props();
 
-  let scrollbarClass = $derived(scrollbar ? 'immich-scrollbar p-2' : 'scrollbar-hidden');
-  let hasTitleClass = $derived(title ? 'top-16 h-[calc(100%-theme(spacing.16))]' : 'top-0 h-full');
+  const enabledActions = $derived(
+    actions
+      .filter((action): action is HeaderButtonActionItem => !isMenuItemType(action))
+      .filter((action) => action.$if?.() ?? true),
+  );
+
+  let scrollbarClass = $derived(scrollbar ? 'immich-scrollbar' : 'scrollbar-hidden');
+  let hasTitleClass = $derived(title ? 'top-16 h-[calc(100%-(--spacing(16)))]' : 'top-0 h-full');
 </script>
 
 <header>
   {#if !hideNavbar}
-    <NavigationBar {showUploadButton} onUploadClick={() => openFileUploadDialog()} />
+    <NavigationBar onUploadClick={() => openFileUploadDialog()} />
   {/if}
-
-  {@render header?.()}
 </header>
-<main
+<div
   tabindex="-1"
-  class="relative grid h-dvh grid-cols-[theme(spacing.0)_auto] overflow-hidden bg-immich-bg max-md:pt-[var(--navbar-height-md)] pt-[var(--navbar-height)] dark:bg-immich-dark-bg sidebar:grid-cols-[theme(spacing.64)_auto]"
+  class="relative z-0 grid grid-cols-[--spacing(0)_auto] overflow-hidden sidebar:grid-cols-[--spacing(64)_auto]
+    {hideNavbar ? 'h-dvh' : 'h-[calc(100dvh-var(--navbar-height))] max-md:h-[calc(100dvh-var(--navbar-height-md))]'}
+    {hideNavbar ? 'pt-(--navbar-height)' : ''}
+    {hideNavbar ? 'max-md:pt-(--navbar-height-md)' : ''}"
 >
-  {#if sidebar}{@render sidebar()}{:else if admin}
-    <AdminSideBar />
+  {#if sidebar}
+    {@render sidebar()}
   {:else}
-    <SideBar />
+    <UserSidebar />
   {/if}
 
-  <section class="relative">
+  <main class="relative">
+    <div class="{scrollbarClass} absolute {hasTitleClass} w-full overflow-y-auto p-2" use:useActions={use}>
+      {@render children?.()}
+    </div>
+
     {#if title || buttons}
-      <div
-        class="absolute flex h-16 w-full place-items-center justify-between border-b p-2 dark:border-immich-dark-gray dark:text-immich-dark-fg"
-      >
+      <div class="absolute flex h-16 w-full place-items-center justify-between border-b p-2 text-dark">
         <div class="flex gap-2 items-center">
           {#if title}
-            <div class="font-medium outline-none" tabindex="-1" id={headerId}>{title}</div>
+            <div class="outline-none pe-8" tabindex="-1" id={headerId}>{title}</div>
           {/if}
           {#if description}
             <p class="text-sm text-gray-400 dark:text-gray-600">{description}</p>
           {/if}
         </div>
+
         {@render buttons?.()}
+
+        {#if enabledActions.length > 0}
+          <div class="hidden md:block">
+            <HStack gap={0}>
+              {#each enabledActions as action, i (i)}
+                <Button
+                  variant="ghost"
+                  size="small"
+                  color={action.color ?? 'secondary'}
+                  leadingIcon={action.icon}
+                  onclick={() => action.onAction(action)}
+                  title={action.data?.title}
+                >
+                  {action.title}
+                </Button>
+              {/each}
+            </HStack>
+          </div>
+
+          <ContextMenuButton aria-label={$t('open')} items={actions} class="md:hidden" />
+        {/if}
       </div>
     {/if}
-
-    <div class="{scrollbarClass} absolute {hasTitleClass} w-full overflow-y-auto" use:useActions={use}>
-      {@render children?.()}
-    </div>
-  </section>
-</main>
+  </main>
+</div>

@@ -1,9 +1,7 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { Exclude, Transform, Type } from 'class-transformer';
+import { Type } from 'class-transformer';
 import {
   ArrayMinSize,
-  IsBoolean,
-  IsEnum,
   IsInt,
   IsNotEmpty,
   IsNumber,
@@ -17,23 +15,23 @@ import {
   ValidateNested,
 } from 'class-validator';
 import { SystemConfig } from 'src/config';
-import { PropertyLifecycle } from 'src/decorators';
-import { CLIPConfig, DuplicateDetectionConfig, FacialRecognitionConfig } from 'src/dtos/model-config.dto';
+import { CLIPConfig, DuplicateDetectionConfig, FacialRecognitionConfig, OcrConfig } from 'src/dtos/model-config.dto';
 import {
   AudioCodec,
   CQMode,
   Colorspace,
   ImageFormat,
   LogLevel,
+  OAuthTokenEndpointAuthMethod,
   QueueName,
   ToneMapping,
-  TranscodeHWAccel,
+  TranscodeHardwareAcceleration,
   TranscodePolicy,
   VideoCodec,
   VideoContainer,
 } from 'src/enum';
 import { ConcurrentQueueName } from 'src/types';
-import { IsCronExpression, ValidateBoolean } from 'src/validation';
+import { IsCronExpression, IsDateStringFormat, Optional, ValidateBoolean, ValidateEnum } from 'src/validation';
 
 const isLibraryScanEnabled = (config: SystemConfigLibraryScanDto) => config.enabled;
 const isOAuthEnabled = (config: SystemConfigOAuthDto) => config.enabled;
@@ -81,24 +79,19 @@ export class SystemConfigFFmpegDto {
   @IsString()
   preset!: string;
 
-  @IsEnum(VideoCodec)
-  @ApiProperty({ enumName: 'VideoCodec', enum: VideoCodec })
+  @ValidateEnum({ enum: VideoCodec, name: 'VideoCodec' })
   targetVideoCodec!: VideoCodec;
 
-  @IsEnum(VideoCodec, { each: true })
-  @ApiProperty({ enumName: 'VideoCodec', enum: VideoCodec, isArray: true })
+  @ValidateEnum({ enum: VideoCodec, name: 'VideoCodec', each: true })
   acceptedVideoCodecs!: VideoCodec[];
 
-  @IsEnum(AudioCodec)
-  @ApiProperty({ enumName: 'AudioCodec', enum: AudioCodec })
+  @ValidateEnum({ enum: AudioCodec, name: 'AudioCodec' })
   targetAudioCodec!: AudioCodec;
 
-  @IsEnum(AudioCodec, { each: true })
-  @ApiProperty({ enumName: 'AudioCodec', enum: AudioCodec, isArray: true })
+  @ValidateEnum({ enum: AudioCodec, name: 'AudioCodec', each: true })
   acceptedAudioCodecs!: AudioCodec[];
 
-  @IsEnum(VideoContainer, { each: true })
-  @ApiProperty({ enumName: 'VideoContainer', enum: VideoContainer, isArray: true })
+  @ValidateEnum({ enum: VideoContainer, name: 'VideoContainer', each: true })
   acceptedContainers!: VideoContainer[];
 
   @IsString()
@@ -130,8 +123,7 @@ export class SystemConfigFFmpegDto {
   @ValidateBoolean()
   temporalAQ!: boolean;
 
-  @IsEnum(CQMode)
-  @ApiProperty({ enumName: 'CQMode', enum: CQMode })
+  @ValidateEnum({ enum: CQMode, name: 'CQMode' })
   cqMode!: CQMode;
 
   @ValidateBoolean()
@@ -140,19 +132,16 @@ export class SystemConfigFFmpegDto {
   @IsString()
   preferredHwDevice!: string;
 
-  @IsEnum(TranscodePolicy)
-  @ApiProperty({ enumName: 'TranscodePolicy', enum: TranscodePolicy })
+  @ValidateEnum({ enum: TranscodePolicy, name: 'TranscodePolicy' })
   transcode!: TranscodePolicy;
 
-  @IsEnum(TranscodeHWAccel)
-  @ApiProperty({ enumName: 'TranscodeHWAccel', enum: TranscodeHWAccel })
-  accel!: TranscodeHWAccel;
+  @ValidateEnum({ enum: TranscodeHardwareAcceleration, name: 'TranscodeHWAccel' })
+  accel!: TranscodeHardwareAcceleration;
 
   @ValidateBoolean()
   accelDecode!: boolean;
 
-  @IsEnum(ToneMapping)
-  @ApiProperty({ enumName: 'ToneMapping', enum: ToneMapping })
+  @ValidateEnum({ enum: ToneMapping, name: 'ToneMapping' })
   tonemap!: ToneMapping;
 }
 
@@ -168,67 +157,85 @@ class SystemConfigJobDto implements Record<ConcurrentQueueName, JobSettingsDto> 
   @ValidateNested()
   @IsObject()
   @Type(() => JobSettingsDto)
-  [QueueName.THUMBNAIL_GENERATION]!: JobSettingsDto;
+  [QueueName.ThumbnailGeneration]!: JobSettingsDto;
 
   @ApiProperty({ type: JobSettingsDto })
   @ValidateNested()
   @IsObject()
   @Type(() => JobSettingsDto)
-  [QueueName.METADATA_EXTRACTION]!: JobSettingsDto;
+  [QueueName.MetadataExtraction]!: JobSettingsDto;
 
   @ApiProperty({ type: JobSettingsDto })
   @ValidateNested()
   @IsObject()
   @Type(() => JobSettingsDto)
-  [QueueName.VIDEO_CONVERSION]!: JobSettingsDto;
+  [QueueName.VideoConversion]!: JobSettingsDto;
 
   @ApiProperty({ type: JobSettingsDto })
   @ValidateNested()
   @IsObject()
   @Type(() => JobSettingsDto)
-  [QueueName.SMART_SEARCH]!: JobSettingsDto;
+  [QueueName.SmartSearch]!: JobSettingsDto;
 
   @ApiProperty({ type: JobSettingsDto })
   @ValidateNested()
   @IsObject()
   @Type(() => JobSettingsDto)
-  [QueueName.MIGRATION]!: JobSettingsDto;
+  [QueueName.Migration]!: JobSettingsDto;
 
   @ApiProperty({ type: JobSettingsDto })
   @ValidateNested()
   @IsObject()
   @Type(() => JobSettingsDto)
-  [QueueName.BACKGROUND_TASK]!: JobSettingsDto;
+  [QueueName.BackgroundTask]!: JobSettingsDto;
 
   @ApiProperty({ type: JobSettingsDto })
   @ValidateNested()
   @IsObject()
   @Type(() => JobSettingsDto)
-  [QueueName.SEARCH]!: JobSettingsDto;
+  [QueueName.Search]!: JobSettingsDto;
 
   @ApiProperty({ type: JobSettingsDto })
   @ValidateNested()
   @IsObject()
   @Type(() => JobSettingsDto)
-  [QueueName.FACE_DETECTION]!: JobSettingsDto;
+  [QueueName.FaceDetection]!: JobSettingsDto;
 
   @ApiProperty({ type: JobSettingsDto })
   @ValidateNested()
   @IsObject()
   @Type(() => JobSettingsDto)
-  [QueueName.SIDECAR]!: JobSettingsDto;
+  [QueueName.Ocr]!: JobSettingsDto;
 
   @ApiProperty({ type: JobSettingsDto })
   @ValidateNested()
   @IsObject()
   @Type(() => JobSettingsDto)
-  [QueueName.LIBRARY]!: JobSettingsDto;
+  [QueueName.Sidecar]!: JobSettingsDto;
 
   @ApiProperty({ type: JobSettingsDto })
   @ValidateNested()
   @IsObject()
   @Type(() => JobSettingsDto)
-  [QueueName.NOTIFICATION]!: JobSettingsDto;
+  [QueueName.Library]!: JobSettingsDto;
+
+  @ApiProperty({ type: JobSettingsDto })
+  @ValidateNested()
+  @IsObject()
+  @Type(() => JobSettingsDto)
+  [QueueName.Notification]!: JobSettingsDto;
+
+  @ApiProperty({ type: JobSettingsDto })
+  @ValidateNested()
+  @IsObject()
+  @Type(() => JobSettingsDto)
+  [QueueName.Workflow]!: JobSettingsDto;
+
+  @ApiProperty({ type: JobSettingsDto })
+  @ValidateNested()
+  @IsObject()
+  @Type(() => JobSettingsDto)
+  [QueueName.Editor]!: JobSettingsDto;
 }
 
 class SystemConfigLibraryScanDto {
@@ -263,25 +270,35 @@ class SystemConfigLoggingDto {
   @ValidateBoolean()
   enabled!: boolean;
 
-  @ApiProperty({ enum: LogLevel, enumName: 'LogLevel' })
-  @IsEnum(LogLevel)
+  @ValidateEnum({ enum: LogLevel, name: 'LogLevel' })
   level!: LogLevel;
+}
+
+class MachineLearningAvailabilityChecksDto {
+  @ValidateBoolean()
+  enabled!: boolean;
+
+  @IsInt()
+  timeout!: number;
+
+  @IsInt()
+  interval!: number;
 }
 
 class SystemConfigMachineLearningDto {
   @ValidateBoolean()
   enabled!: boolean;
 
-  @PropertyLifecycle({ deprecatedAt: 'v1.122.0' })
-  @Exclude()
-  url?: string;
-
   @IsUrl({ require_tld: false, allow_underscores: true }, { each: true })
   @ArrayMinSize(1)
-  @Transform(({ obj, value }) => (obj.url ? [obj.url] : value))
   @ValidateIf((dto) => dto.enabled)
   @ApiProperty({ type: 'array', items: { type: 'string', format: 'uri' }, minItems: 1 })
   urls!: string[];
+
+  @Type(() => MachineLearningAvailabilityChecksDto)
+  @ValidateNested()
+  @IsObject()
+  availabilityChecks!: MachineLearningAvailabilityChecksDto;
 
   @Type(() => CLIPConfig)
   @ValidateNested()
@@ -297,6 +314,11 @@ class SystemConfigMachineLearningDto {
   @ValidateNested()
   @IsObject()
   facialRecognition!: FacialRecognitionConfig;
+
+  @Type(() => OcrConfig)
+  @ValidateNested()
+  @IsObject()
+  ocr!: OcrConfig;
 }
 
 enum MapTheme {
@@ -305,8 +327,7 @@ enum MapTheme {
 }
 
 export class MapThemeDto {
-  @IsEnum(MapTheme)
-  @ApiProperty({ enum: MapTheme, enumName: 'MapTheme' })
+  @ValidateEnum({ enum: MapTheme, name: 'MapTheme' })
   theme!: MapTheme;
 }
 
@@ -328,6 +349,26 @@ class SystemConfigNewVersionCheckDto {
   enabled!: boolean;
 }
 
+class SystemConfigNightlyTasksDto {
+  @IsDateStringFormat('HH:mm', { message: 'startTime must be in HH:mm format' })
+  startTime!: string;
+
+  @ValidateBoolean()
+  databaseCleanup!: boolean;
+
+  @ValidateBoolean()
+  missingThumbnails!: boolean;
+
+  @ValidateBoolean()
+  clusterNewFaces!: boolean;
+
+  @ValidateBoolean()
+  generateMemories!: boolean;
+
+  @ValidateBoolean()
+  syncQuotaUsage!: boolean;
+}
+
 class SystemConfigOAuthDto {
   @ValidateBoolean()
   autoLaunch!: boolean;
@@ -344,13 +385,23 @@ class SystemConfigOAuthDto {
   clientId!: string;
 
   @ValidateIf(isOAuthEnabled)
-  @IsNotEmpty()
   @IsString()
   clientSecret!: string;
 
+  @ValidateEnum({ enum: OAuthTokenEndpointAuthMethod, name: 'OAuthTokenEndpointAuthMethod' })
+  tokenEndpointAuthMethod!: OAuthTokenEndpointAuthMethod;
+
+  @IsInt()
+  @IsPositive()
+  @Optional()
+  @ApiProperty({ type: 'integer' })
+  timeout!: number;
+
   @IsNumber()
   @Min(0)
-  defaultStorageQuota!: number;
+  @Optional({ nullable: true })
+  @ApiProperty({ type: 'integer', format: 'int64' })
+  defaultStorageQuota!: number | null;
 
   @ValidateBoolean()
   enabled!: boolean;
@@ -383,6 +434,9 @@ class SystemConfigOAuthDto {
 
   @IsString()
   storageQuotaClaim!: string;
+
+  @IsString()
+  roleClaim!: string;
 }
 
 class SystemConfigPasswordLoginDto {
@@ -396,7 +450,7 @@ class SystemConfigReverseGeocodingDto {
 }
 
 class SystemConfigFacesDto {
-  @IsBoolean()
+  @ValidateBoolean()
   import!: boolean;
 }
 
@@ -415,12 +469,12 @@ class SystemConfigServerDto {
   @IsString()
   loginPageMessage!: string;
 
-  @IsBoolean()
+  @ValidateBoolean()
   publicUsers!: boolean;
 }
 
 class SystemConfigSmtpTransportDto {
-  @IsBoolean()
+  @ValidateBoolean()
   ignoreCert!: boolean;
 
   @IsNotEmpty()
@@ -432,6 +486,9 @@ class SystemConfigSmtpTransportDto {
   @Max(65_535)
   port!: number;
 
+  @ValidateBoolean()
+  secure!: boolean;
+
   @IsString()
   username!: string;
 
@@ -440,7 +497,7 @@ class SystemConfigSmtpTransportDto {
 }
 
 export class SystemConfigSmtpDto {
-  @IsBoolean()
+  @ValidateBoolean()
   enabled!: boolean;
 
   @ValidateIf(isEmailNotificationEnabled)
@@ -513,8 +570,7 @@ export class SystemConfigThemeDto {
 }
 
 class SystemConfigGeneratedImageDto {
-  @IsEnum(ImageFormat)
-  @ApiProperty({ enumName: 'ImageFormat', enum: ImageFormat })
+  @ValidateEnum({ enum: ImageFormat, name: 'ImageFormat' })
   format!: ImageFormat;
 
   @IsInt()
@@ -529,16 +585,16 @@ class SystemConfigGeneratedImageDto {
   @Type(() => Number)
   @ApiProperty({ type: 'integer' })
   size!: number;
+
+  @ValidateBoolean({ optional: true, default: false })
+  progressive?: boolean;
 }
 
 class SystemConfigGeneratedFullsizeImageDto {
-  @IsBoolean()
-  @Type(() => Boolean)
-  @ApiProperty({ type: 'boolean' })
+  @ValidateBoolean()
   enabled!: boolean;
 
-  @IsEnum(ImageFormat)
-  @ApiProperty({ enumName: 'ImageFormat', enum: ImageFormat })
+  @ValidateEnum({ enum: ImageFormat, name: 'ImageFormat' })
   format!: ImageFormat;
 
   @IsInt()
@@ -547,6 +603,9 @@ class SystemConfigGeneratedFullsizeImageDto {
   @Type(() => Number)
   @ApiProperty({ type: 'integer' })
   quality!: number;
+
+  @ValidateBoolean({ optional: true, default: false })
+  progressive?: boolean;
 }
 
 export class SystemConfigImageDto {
@@ -565,8 +624,7 @@ export class SystemConfigImageDto {
   @IsObject()
   fullsize!: SystemConfigGeneratedFullsizeImageDto;
 
-  @IsEnum(Colorspace)
-  @ApiProperty({ enumName: 'Colorspace', enum: Colorspace })
+  @ValidateEnum({ enum: Colorspace, name: 'Colorspace' })
   colorspace!: Colorspace;
 
   @ValidateBoolean()
@@ -622,6 +680,11 @@ export class SystemConfigDto implements SystemConfig {
   @ValidateNested()
   @IsObject()
   newVersionCheck!: SystemConfigNewVersionCheckDto;
+
+  @Type(() => SystemConfigNightlyTasksDto)
+  @ValidateNested()
+  @IsObject()
+  nightlyTasks!: SystemConfigNightlyTasksDto;
 
   @Type(() => SystemConfigOAuthDto)
   @ValidateNested()

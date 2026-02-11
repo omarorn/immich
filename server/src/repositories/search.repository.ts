@@ -2,46 +2,17 @@ import { Injectable } from '@nestjs/common';
 import { Kysely, OrderByDirection, Selectable, sql } from 'kysely';
 import { InjectKysely } from 'nestjs-kysely';
 import { randomUUID } from 'node:crypto';
-import { DB, Exif } from 'src/db';
 import { DummyValue, GenerateSql } from 'src/decorators';
 import { MapAsset } from 'src/dtos/asset-response.dto';
-import { AssetStatus, AssetType } from 'src/enum';
-import { anyUuid, asUuid, searchAssetBuilder } from 'src/utils/database';
+import { AssetStatus, AssetType, AssetVisibility, VectorIndex } from 'src/enum';
+import { probes } from 'src/repositories/database.repository';
+import { DB } from 'src/schema';
+import { AssetExifTable } from 'src/schema/tables/asset-exif.table';
+import { anyUuid, searchAssetBuilder, withExif } from 'src/utils/database';
+import { paginationHelper } from 'src/utils/pagination';
 import { isValidInteger } from 'src/validation';
 
-export interface SearchResult<T> {
-  /** total matches */
-  total: number;
-  /** collection size */
-  count: number;
-  /** current page */
-  page: number;
-  /** items for page */
-  items: T[];
-  /** score */
-  distances: number[];
-  facets: SearchFacet[];
-}
-
-export interface SearchFacet {
-  fieldName: string;
-  counts: Array<{
-    count: number;
-    value: string;
-  }>;
-}
-
-export type SearchExploreItemSet<T> = Array<{
-  value: string;
-  data: T;
-}>;
-
-export interface SearchExploreItem<T> {
-  fieldName: string;
-  items: SearchExploreItemSet<T>;
-}
-
-export interface SearchAssetIDOptions {
+export interface SearchAssetIdOptions {
   checksum?: Buffer;
   deviceAssetId?: string;
   id?: string;
@@ -53,20 +24,19 @@ export interface SearchUserIdOptions {
   userIds?: string[];
 }
 
-export type SearchIdOptions = SearchAssetIDOptions & SearchUserIdOptions;
+export type SearchIdOptions = SearchAssetIdOptions & SearchUserIdOptions;
 
 export interface SearchStatusOptions {
-  isArchived?: boolean;
   isEncoded?: boolean;
   isFavorite?: boolean;
   isMotion?: boolean;
   isOffline?: boolean;
-  isVisible?: boolean;
   isNotInAlbum?: boolean;
   type?: AssetType;
   status?: AssetStatus;
   withArchived?: boolean;
   withDeleted?: boolean;
+  visibility?: AssetVisibility;
 }
 
 export interface SearchOneToOneRelationOptions {
@@ -114,12 +84,20 @@ export interface SearchEmbeddingOptions {
   userIds: string[];
 }
 
+export interface SearchOcrOptions {
+  ocr?: string;
+}
+
 export interface SearchPeopleOptions {
   personIds?: string[];
 }
 
 export interface SearchTagOptions {
-  tagIds?: string[];
+  tagIds?: string[] | null;
+}
+
+export interface SearchAlbumOptions {
+  albumIds?: string[];
 }
 
 export interface SearchOrderOptions {
@@ -139,11 +117,11 @@ type BaseAssetSearchOptions = SearchDateOptions &
   SearchStatusOptions &
   SearchUserIdOptions &
   SearchPeopleOptions &
-  SearchTagOptions;
+  SearchTagOptions &
+  SearchAlbumOptions &
+  SearchOcrOptions;
 
 export type AssetSearchOptions = BaseAssetSearchOptions & SearchRelationOptions;
-
-export type AssetSearchOneToOneRelationOptions = BaseAssetSearchOptions & SearchOneToOneRelationOptions;
 
 export type AssetSearchBuilderOptions = Omit<AssetSearchOptions, 'orderDirection'>;
 
@@ -154,21 +132,18 @@ export type SmartSearchOptions = SearchDateOptions &
   SearchStatusOptions &
   SearchUserIdOptions &
   SearchPeopleOptions &
-  SearchTagOptions;
+  SearchTagOptions &
+  SearchOcrOptions;
+
+export type OcrSearchOptions = SearchDateOptions & SearchOcrOptions;
+
+export type LargeAssetSearchOptions = AssetSearchOptions & { minFileSize?: number };
 
 export interface FaceEmbeddingSearch extends SearchEmbeddingOptions {
   hasPerson?: boolean;
   numResults: number;
   maxDistance: number;
   minBirthDate?: Date | null;
-}
-
-export interface AssetDuplicateSearch {
-  assetId: string;
-  embedding: string;
-  maxDistance: number;
-  type: AssetType;
-  userIds: string[];
 }
 
 export interface FaceSearchResult {
@@ -193,9 +168,16 @@ export interface GetCitiesOptions extends GetStatesOptions {
 
 export interface GetCameraModelsOptions {
   make?: string;
+  lensModel?: string;
 }
 
 export interface GetCameraMakesOptions {
+  model?: string;
+  lensModel?: string;
+}
+
+export interface GetCameraLensModelsOptions {
+  make?: string;
   model?: string;
 }
 
@@ -218,13 +200,29 @@ export class SearchRepository {
   async searchMetadata(pagination: SearchPaginationOptions, options: AssetSearchOptions) {
     const orderDirection = (options.orderDirection?.toLowerCase() || 'desc') as OrderByDirection;
     const items = await searchAssetBuilder(this.db, options)
-      .orderBy('assets.fileCreatedAt', orderDirection)
+      .selectAll('asset')
+      .orderBy('asset.fileCreatedAt', orderDirection)
       .limit(pagination.size + 1)
       .offset((pagination.page - 1) * pagination.size)
       .execute();
-    const hasNextPage = items.length > pagination.size;
-    items.splice(pagination.size);
-    return { items, hasNextPage };
+
+    return paginationHelper(items, pagination.size);
+  }
+
+  @GenerateSql({
+    params: [
+      {
+        takenAfter: DummyValue.DATE,
+        lensModel: DummyValue.STRING,
+        isFavorite: true,
+        userIds: [DummyValue.UUID],
+      },
+    ],
+  })
+  searchStatistics(options: AssetSearchOptions) {
+    return searchAssetBuilder(this.db, options)
+      .select((qb) => qb.fn.countAll<number>().as('total'))
+      .executeTakeFirstOrThrow();
   }
 
   @GenerateSql({
@@ -243,15 +241,40 @@ export class SearchRepository {
     const uuid = randomUUID();
     const builder = searchAssetBuilder(this.db, options);
     const lessThan = builder
-      .where('assets.id', '<', uuid)
+      .selectAll('asset')
+      .where('asset.id', '<', uuid)
       .orderBy(sql`random()`)
       .limit(size);
     const greaterThan = builder
-      .where('assets.id', '>', uuid)
+      .selectAll('asset')
+      .where('asset.id', '>', uuid)
       .orderBy(sql`random()`)
       .limit(size);
     const { rows } = await sql<MapAsset>`${lessThan} union all ${greaterThan} limit ${size}`.execute(this.db);
     return rows;
+  }
+
+  @GenerateSql({
+    params: [
+      100,
+      {
+        takenAfter: DummyValue.DATE,
+        lensModel: DummyValue.STRING,
+        withStacked: true,
+        isFavorite: true,
+        userIds: [DummyValue.UUID],
+      },
+    ],
+  })
+  searchLargeAssets(size: number, options: LargeAssetSearchOptions) {
+    const orderDirection = (options.orderDirection?.toLowerCase() || 'desc') as OrderByDirection;
+    return searchAssetBuilder(this.db, options)
+      .selectAll('asset')
+      .$call(withExif)
+      .where('asset_exif.fileSizeInByte', '>', options.minFileSize || 0)
+      .orderBy('asset_exif.fileSizeInByte', orderDirection)
+      .limit(size)
+      .execute();
   }
 
   @GenerateSql({
@@ -267,58 +290,29 @@ export class SearchRepository {
       },
     ],
   })
-  async searchSmart(pagination: SearchPaginationOptions, options: SmartSearchOptions) {
+  searchSmart(pagination: SearchPaginationOptions, options: SmartSearchOptions) {
     if (!isValidInteger(pagination.size, { min: 1, max: 1000 })) {
       throw new Error(`Invalid value for 'size': ${pagination.size}`);
     }
 
-    const items = await searchAssetBuilder(this.db, options)
-      .innerJoin('smart_search', 'assets.id', 'smart_search.assetId')
-      .orderBy(sql`smart_search.embedding <=> ${options.embedding}`)
-      .limit(pagination.size + 1)
-      .offset((pagination.page - 1) * pagination.size)
-      .execute();
-
-    const hasNextPage = items.length > pagination.size;
-    items.splice(pagination.size);
-    return { items, hasNextPage };
+    return this.db.transaction().execute(async (trx) => {
+      await sql`set local vchordrq.probes = ${sql.lit(probes[VectorIndex.Clip])}`.execute(trx);
+      const items = await searchAssetBuilder(trx, options)
+        .selectAll('asset')
+        .innerJoin('smart_search', 'asset.id', 'smart_search.assetId')
+        .orderBy(sql`smart_search.embedding <=> ${options.embedding}`)
+        .limit(pagination.size + 1)
+        .offset((pagination.page - 1) * pagination.size)
+        .execute();
+      return paginationHelper(items, pagination.size);
+    });
   }
 
   @GenerateSql({
-    params: [
-      {
-        assetId: DummyValue.UUID,
-        embedding: DummyValue.VECTOR,
-        maxDistance: 0.6,
-        type: AssetType.IMAGE,
-        userIds: [DummyValue.UUID],
-      },
-    ],
+    params: [DummyValue.UUID],
   })
-  searchDuplicates({ assetId, embedding, maxDistance, type, userIds }: AssetDuplicateSearch) {
-    return this.db
-      .with('cte', (qb) =>
-        qb
-          .selectFrom('assets')
-          .select([
-            'assets.id as assetId',
-            'assets.duplicateId',
-            sql<number>`smart_search.embedding <=> ${embedding}`.as('distance'),
-          ])
-          .innerJoin('smart_search', 'assets.id', 'smart_search.assetId')
-          .where('assets.ownerId', '=', anyUuid(userIds))
-          .where('assets.deletedAt', 'is', null)
-          .where('assets.isVisible', '=', true)
-          .where('assets.type', '=', type)
-          .where('assets.id', '!=', asUuid(assetId))
-          .where('assets.stackId', 'is', null)
-          .orderBy(sql`smart_search.embedding <=> ${embedding}`)
-          .limit(64),
-      )
-      .selectFrom('cte')
-      .selectAll()
-      .where('cte.distance', '<=', maxDistance as number)
-      .execute();
+  async getEmbedding(assetId: string) {
+    return this.db.selectFrom('smart_search').selectAll().where('assetId', '=', assetId).executeTakeFirst();
   }
 
   @GenerateSql({
@@ -336,31 +330,36 @@ export class SearchRepository {
       throw new Error(`Invalid value for 'numResults': ${numResults}`);
     }
 
-    return this.db
-      .with('cte', (qb) =>
-        qb
-          .selectFrom('asset_faces')
-          .select([
-            'asset_faces.id',
-            'asset_faces.personId',
-            sql<number>`face_search.embedding <=> ${embedding}`.as('distance'),
-          ])
-          .innerJoin('assets', 'assets.id', 'asset_faces.assetId')
-          .innerJoin('face_search', 'face_search.faceId', 'asset_faces.id')
-          .leftJoin('person', 'person.id', 'asset_faces.personId')
-          .where('assets.ownerId', '=', anyUuid(userIds))
-          .where('assets.deletedAt', 'is', null)
-          .$if(!!hasPerson, (qb) => qb.where('asset_faces.personId', 'is not', null))
-          .$if(!!minBirthDate, (qb) =>
-            qb.where((eb) => eb.or([eb('person.birthDate', 'is', null), eb('person.birthDate', '<=', minBirthDate!)])),
-          )
-          .orderBy(sql`face_search.embedding <=> ${embedding}`)
-          .limit(numResults),
-      )
-      .selectFrom('cte')
-      .selectAll()
-      .where('cte.distance', '<=', maxDistance)
-      .execute();
+    return this.db.transaction().execute(async (trx) => {
+      await sql`set local vchordrq.probes = ${sql.lit(probes[VectorIndex.Face])}`.execute(trx);
+      return await trx
+        .with('cte', (qb) =>
+          qb
+            .selectFrom('asset_face')
+            .select([
+              'asset_face.id',
+              'asset_face.personId',
+              sql<number>`face_search.embedding <=> ${embedding}`.as('distance'),
+            ])
+            .innerJoin('asset', 'asset.id', 'asset_face.assetId')
+            .innerJoin('face_search', 'face_search.faceId', 'asset_face.id')
+            .leftJoin('person', 'person.id', 'asset_face.personId')
+            .where('asset.ownerId', '=', anyUuid(userIds))
+            .where('asset.deletedAt', 'is', null)
+            .$if(!!hasPerson, (qb) => qb.where('asset_face.personId', 'is not', null))
+            .$if(!!minBirthDate, (qb) =>
+              qb.where((eb) =>
+                eb.or([eb('person.birthDate', 'is', null), eb('person.birthDate', '<=', minBirthDate!)]),
+              ),
+            )
+            .orderBy('distance')
+            .limit(numResults),
+        )
+        .selectFrom('cte')
+        .selectAll()
+        .where('cte.distance', '<=', maxDistance)
+        .execute();
+    });
   }
 
   @GenerateSql({ params: [DummyValue.STRING] })
@@ -395,14 +394,13 @@ export class SearchRepository {
     return this.db
       .withRecursive('cte', (qb) => {
         const base = qb
-          .selectFrom('exif')
+          .selectFrom('asset_exif')
           .select(['city', 'assetId'])
-          .innerJoin('assets', 'assets.id', 'exif.assetId')
-          .where('assets.ownerId', '=', anyUuid(userIds))
-          .where('assets.isVisible', '=', true)
-          .where('assets.isArchived', '=', false)
-          .where('assets.type', '=', AssetType.IMAGE)
-          .where('assets.deletedAt', 'is', null)
+          .innerJoin('asset', 'asset.id', 'asset_exif.assetId')
+          .where('asset.ownerId', '=', anyUuid(userIds))
+          .where('asset.visibility', '=', AssetVisibility.Timeline)
+          .where('asset.type', '=', AssetType.Image)
+          .where('asset.deletedAt', 'is', null)
           .orderBy('city')
           .limit(1);
 
@@ -412,15 +410,14 @@ export class SearchRepository {
           .innerJoinLateral(
             (qb) =>
               qb
-                .selectFrom('exif')
+                .selectFrom('asset_exif')
                 .select(['city', 'assetId'])
-                .innerJoin('assets', 'assets.id', 'exif.assetId')
-                .where('assets.ownerId', '=', anyUuid(userIds))
-                .where('assets.isVisible', '=', true)
-                .where('assets.isArchived', '=', false)
-                .where('assets.type', '=', AssetType.IMAGE)
-                .where('assets.deletedAt', 'is', null)
-                .whereRef('exif.city', '>', 'cte.city')
+                .innerJoin('asset', 'asset.id', 'asset_exif.assetId')
+                .where('asset.ownerId', '=', anyUuid(userIds))
+                .where('asset.visibility', '=', AssetVisibility.Timeline)
+                .where('asset.type', '=', AssetType.Image)
+                .where('asset.deletedAt', 'is', null)
+                .whereRef('asset_exif.city', '>', 'cte.city')
                 .orderBy('city')
                 .limit(1)
                 .as('l'),
@@ -429,63 +426,26 @@ export class SearchRepository {
 
         return sql<{ city: string; assetId: string }>`(${base} union all ${recursive})`;
       })
-      .selectFrom('assets')
-      .innerJoin('exif', 'assets.id', 'exif.assetId')
-      .innerJoin('cte', 'assets.id', 'cte.assetId')
-      .selectAll('assets')
+      .selectFrom('asset')
+      .innerJoin('asset_exif', 'asset.id', 'asset_exif.assetId')
+      .innerJoin('cte', 'asset.id', 'cte.assetId')
+      .selectAll('asset')
       .select((eb) =>
         eb
-          .fn('to_jsonb', [eb.table('exif')])
-          .$castTo<Selectable<Exif>>()
+          .fn('to_jsonb', [eb.table('asset_exif')])
+          .$castTo<Selectable<AssetExifTable>>()
           .as('exifInfo'),
       )
-      .orderBy('exif.city')
+      .orderBy('asset_exif.city')
       .execute();
   }
 
   async upsert(assetId: string, embedding: string): Promise<void> {
     await this.db
       .insertInto('smart_search')
-      .values({ assetId: asUuid(assetId), embedding } as any)
-      .onConflict((oc) => oc.column('assetId').doUpdateSet({ embedding } as any))
+      .values({ assetId, embedding })
+      .onConflict((oc) => oc.column('assetId').doUpdateSet((eb) => ({ embedding: eb.ref('excluded.embedding') })))
       .execute();
-  }
-
-  async getDimensionSize(): Promise<number> {
-    const { rows } = await sql<{ dimsize: number }>`
-      select atttypmod as dimsize
-      from pg_attribute f
-        join pg_class c ON c.oid = f.attrelid
-      where c.relkind = 'r'::char
-        and f.attnum > 0
-        and c.relname = 'smart_search'
-        and f.attname = 'embedding'
-    `.execute(this.db);
-
-    const dimSize = rows[0]['dimsize'];
-    if (!isValidInteger(dimSize, { min: 1, max: 2 ** 16 })) {
-      throw new Error(`Could not retrieve CLIP dimension size`);
-    }
-    return dimSize;
-  }
-
-  setDimensionSize(dimSize: number): Promise<void> {
-    if (!isValidInteger(dimSize, { min: 1, max: 2 ** 16 })) {
-      throw new Error(`Invalid CLIP dimension size: ${dimSize}`);
-    }
-
-    return this.db.transaction().execute(async (trx) => {
-      await sql`truncate ${sql.table('smart_search')}`.execute(trx);
-      await trx.schema
-        .alterTable('smart_search')
-        .alterColumn('embedding', (col) => col.setDataType(sql.raw(`vector(${dimSize})`)))
-        .execute();
-      await sql`reindex index clip_index`.execute(trx);
-    });
-  }
-
-  async deleteAllSearchEmbeddings(): Promise<void> {
-    await sql`truncate ${sql.table('smart_search')}`.execute(this.db);
   }
 
   async getCountries(userIds: string[]): Promise<string[]> {
@@ -512,32 +472,47 @@ export class SearchRepository {
     return res.map((row) => row.city!);
   }
 
-  @GenerateSql({ params: [[DummyValue.UUID], DummyValue.STRING] })
-  async getCameraMakes(userIds: string[], { model }: GetCameraMakesOptions): Promise<string[]> {
+  @GenerateSql({ params: [[DummyValue.UUID], DummyValue.STRING, DummyValue.STRING] })
+  async getCameraMakes(userIds: string[], { model, lensModel }: GetCameraMakesOptions): Promise<string[]> {
     const res = await this.getExifField('make', userIds)
       .$if(!!model, (qb) => qb.where('model', '=', model!))
+      .$if(!!lensModel, (qb) => qb.where('lensModel', '=', lensModel!))
       .execute();
 
     return res.map((row) => row.make!);
   }
 
-  @GenerateSql({ params: [[DummyValue.UUID], DummyValue.STRING] })
-  async getCameraModels(userIds: string[], { make }: GetCameraModelsOptions): Promise<string[]> {
+  @GenerateSql({ params: [[DummyValue.UUID], DummyValue.STRING, DummyValue.STRING] })
+  async getCameraModels(userIds: string[], { make, lensModel }: GetCameraModelsOptions): Promise<string[]> {
     const res = await this.getExifField('model', userIds)
       .$if(!!make, (qb) => qb.where('make', '=', make!))
+      .$if(!!lensModel, (qb) => qb.where('lensModel', '=', lensModel!))
       .execute();
 
     return res.map((row) => row.model!);
   }
 
-  private getExifField<K extends 'city' | 'state' | 'country' | 'make' | 'model'>(field: K, userIds: string[]) {
+  @GenerateSql({ params: [[DummyValue.UUID], DummyValue.STRING] })
+  async getCameraLensModels(userIds: string[], { make, model }: GetCameraLensModelsOptions): Promise<string[]> {
+    const res = await this.getExifField('lensModel', userIds)
+      .$if(!!make, (qb) => qb.where('make', '=', make!))
+      .$if(!!model, (qb) => qb.where('model', '=', model!))
+      .execute();
+
+    return res.map((row) => row.lensModel!);
+  }
+
+  private getExifField<K extends 'city' | 'state' | 'country' | 'make' | 'model' | 'lensModel'>(
+    field: K,
+    userIds: string[],
+  ) {
     return this.db
-      .selectFrom('exif')
+      .selectFrom('asset_exif')
       .select(field)
       .distinctOn(field)
-      .innerJoin('assets', 'assets.id', 'exif.assetId')
+      .innerJoin('asset', 'asset.id', 'asset_exif.assetId')
       .where('ownerId', '=', anyUuid(userIds))
-      .where('isVisible', '=', true)
+      .where('visibility', '=', AssetVisibility.Timeline)
       .where('deletedAt', 'is', null)
       .where(field, 'is not', null);
   }

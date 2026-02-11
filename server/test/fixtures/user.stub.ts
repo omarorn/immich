@@ -1,17 +1,18 @@
 import { UserAdmin } from 'src/database';
-import { UserAvatarColor, UserMetadataKey, UserStatus } from 'src/enum';
+import { UserStatus } from 'src/enum';
 import { authStub } from 'test/fixtures/auth.stub';
 
 export const userStub = {
   admin: <UserAdmin>{
     ...authStub.admin.user,
-    status: UserStatus.ACTIVE,
+    status: UserStatus.Active,
     profileChangedAt: new Date('2021-01-01'),
     name: 'admin_name',
     id: 'admin_id',
     storageLabel: 'admin',
     oauthId: '',
     shouldChangePassword: false,
+    avatarColor: null,
     profileImagePath: '',
     createdAt: new Date('2021-01-01'),
     deletedAt: null,
@@ -22,34 +23,31 @@ export const userStub = {
   },
   user1: <UserAdmin>{
     ...authStub.user1.user,
-    status: UserStatus.ACTIVE,
+    status: UserStatus.Active,
     profileChangedAt: new Date('2021-01-01'),
     name: 'immich_name',
     storageLabel: null,
     oauthId: '',
     shouldChangePassword: false,
+    avatarColor: null,
     profileImagePath: '',
     createdAt: new Date('2021-01-01'),
     deletedAt: null,
     updatedAt: new Date('2021-01-01'),
-    metadata: [
-      {
-        key: UserMetadataKey.PREFERENCES,
-        value: { avatar: { color: UserAvatarColor.PRIMARY } },
-      },
-    ],
+    metadata: [],
     quotaSizeInBytes: null,
     quotaUsageInBytes: 0,
   },
   user2: <UserAdmin>{
     ...authStub.user2.user,
-    status: UserStatus.ACTIVE,
+    status: UserStatus.Active,
     profileChangedAt: new Date('2021-01-01'),
     metadata: [],
     name: 'immich_name',
     storageLabel: null,
     oauthId: '',
     shouldChangePassword: false,
+    avatarColor: null,
     profileImagePath: '',
     createdAt: new Date('2021-01-01'),
     deletedAt: null,

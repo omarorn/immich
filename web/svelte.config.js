@@ -10,10 +10,14 @@ process.env.PUBLIC_IMMICH_PAY_HOST = process.env.PUBLIC_IMMICH_PAY_HOST || 'http
 /** @type {import('@sveltejs/kit').Config} */
 const config = {
   compilerOptions: {
-    runes: true,
+    // TODO pending `@immich/ui` to enable it
+    // runes: true,
   },
   preprocess: vitePreprocess(),
   kit: {
+    paths: {
+      relative: false,
+    },
     adapter: adapter({
       fallback: 'index.html',
       precompress: true,
@@ -21,8 +25,11 @@ const config = {
     alias: {
       $lib: 'src/lib',
       '$lib/*': 'src/lib/*',
+      $tests: 'src/../tests',
+      '$tests/*': 'src/../tests/*',
       '@test-data': 'src/test-data',
       $i18n: '../i18n',
+      'chromecast-caf-sender': './node_modules/@types/chromecast-caf-sender/index.d.ts',
     },
   },
 };

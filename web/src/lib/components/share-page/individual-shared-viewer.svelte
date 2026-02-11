@@ -1,27 +1,27 @@
 <script lang="ts">
   import { goto } from '$app/navigation';
   import type { Action } from '$lib/components/asset-viewer/actions/action';
-  import { AppRoute, AssetAction } from '$lib/constants';
+  import DownloadAction from '$lib/components/timeline/actions/DownloadAction.svelte';
+  import RemoveFromSharedLink from '$lib/components/timeline/actions/RemoveFromSharedLinkAction.svelte';
+  import AssetSelectControlBar from '$lib/components/timeline/AssetSelectControlBar.svelte';
+  import { AssetAction } from '$lib/constants';
+  import { authManager } from '$lib/managers/auth-manager.svelte';
+  import type { Viewport } from '$lib/managers/timeline-manager/types';
+  import { Route } from '$lib/route';
+  import { AssetInteraction } from '$lib/stores/asset-interaction.svelte';
   import { dragAndDropFilesStore } from '$lib/stores/drag-and-drop-files.store';
-  import { getKey, handlePromiseError } from '$lib/utils';
-  import { downloadArchive } from '$lib/utils/asset-utils';
+  import { mediaQueryManager } from '$lib/stores/media-query-manager.svelte';
+  import { handlePromiseError } from '$lib/utils';
+  import { cancelMultiselect, downloadArchive } from '$lib/utils/asset-utils';
   import { fileUploadHandler, openFileUploadDialog } from '$lib/utils/file-uploader';
   import { handleError } from '$lib/utils/handle-error';
-  import { addSharedLinkAssets, type SharedLinkResponseDto } from '@immich/sdk';
-  import { mdiArrowLeft, mdiFileImagePlusOutline, mdiFolderDownloadOutline, mdiSelectAll } from '@mdi/js';
-  import CircleIconButton from '../elements/buttons/circle-icon-button.svelte';
-  import DownloadAction from '../photos-page/actions/download-action.svelte';
-  import RemoveFromSharedLink from '../photos-page/actions/remove-from-shared-link.svelte';
-  import AssetSelectControlBar from '../photos-page/asset-select-control-bar.svelte';
+  import { toTimelineAsset } from '$lib/utils/timeline-util';
+  import { addSharedLinkAssets, getAssetInfo, type SharedLinkResponseDto } from '@immich/sdk';
+  import { IconButton, Logo, toastManager } from '@immich/ui';
+  import { mdiArrowLeft, mdiDownload, mdiFileImagePlusOutline, mdiSelectAll } from '@mdi/js';
+  import { t } from 'svelte-i18n';
   import ControlAppBar from '../shared-components/control-app-bar.svelte';
   import GalleryViewer from '../shared-components/gallery-viewer/gallery-viewer.svelte';
-  import AssetViewer from '../asset-viewer/asset-viewer.svelte';
-  import { cancelMultiselect } from '$lib/utils/asset-utils';
-  import ImmichLogoSmallLink from '$lib/components/shared-components/immich-logo-small-link.svelte';
-  import { NotificationType, notificationController } from '../shared-components/notification/notification';
-  import type { Viewport } from '$lib/stores/assets-store.svelte';
-  import { t } from 'svelte-i18n';
-  import { AssetInteraction } from '$lib/stores/asset-interaction.svelte';
 
   interface Props {
     sharedLink: SharedLinkResponseDto;
@@ -51,28 +51,25 @@
       let results: (string | undefined)[] = [];
       results = await (!files || files.length === 0 || !Array.isArray(files)
         ? openFileUploadDialog()
-        : fileUploadHandler(files));
+        : fileUploadHandler({ files }));
       const data = await addSharedLinkAssets({
+        ...authManager.params,
         id: sharedLink.id,
         assetIdsDto: {
           assetIds: results.filter((id) => !!id) as string[],
         },
-        key: getKey(),
       });
 
       const added = data.filter((item) => item.success).length;
 
-      notificationController.show({
-        message: $t('assets_added_count', { values: { count: added } }),
-        type: NotificationType.Info,
-      });
+      toastManager.success($t('assets_added_count', { values: { count: added } }));
     } catch (error) {
       handleError(error, $t('errors.unable_to_add_assets_to_shared_link'));
     }
   };
 
   const handleSelectAll = () => {
-    assetInteraction.selectAssets(assets);
+    assetInteraction.selectAssets(assets.map((asset) => toTimelineAsset(asset)));
   };
 
   const handleAction = async (action: Action) => {
@@ -80,21 +77,28 @@
       case AssetAction.ARCHIVE:
       case AssetAction.DELETE:
       case AssetAction.TRASH: {
-        await goto(AppRoute.PHOTOS);
+        await goto(Route.photos());
         break;
       }
     }
   };
 </script>
 
-<section class="bg-immich-bg dark:bg-immich-dark-bg">
+<section>
   {#if sharedLink?.allowUpload || assets.length > 1}
     {#if assetInteraction.selectionActive}
       <AssetSelectControlBar
         assets={assetInteraction.selectedAssets}
         clearSelect={() => cancelMultiselect(assetInteraction)}
       >
-        <CircleIconButton title={$t('select_all')} icon={mdiSelectAll} onclick={handleSelectAll} />
+        <IconButton
+          shape="round"
+          color="secondary"
+          variant="ghost"
+          aria-label={$t('select_all')}
+          icon={mdiSelectAll}
+          onclick={handleSelectAll}
+        />
         {#if sharedLink?.allowDownload}
           <DownloadAction filename="immich-shared.zip" />
         {/if}
@@ -103,38 +107,46 @@
         {/if}
       </AssetSelectControlBar>
     {:else}
-      <ControlAppBar onClose={() => goto(AppRoute.PHOTOS)} backIcon={mdiArrowLeft} showBackButton={false}>
+      <ControlAppBar onClose={() => goto(Route.photos())} backIcon={mdiArrowLeft} showBackButton={false}>
         {#snippet leading()}
-          <ImmichLogoSmallLink />
+          <a data-sveltekit-preload-data="hover" class="ms-4" href="/">
+            <Logo variant={mediaQueryManager.maxMd ? 'icon' : 'inline'} class="min-w-10" />
+          </a>
         {/snippet}
 
         {#snippet trailing()}
           {#if sharedLink?.allowUpload}
-            <CircleIconButton
-              title={$t('add_photos')}
+            <IconButton
+              shape="round"
+              color="secondary"
+              variant="ghost"
+              aria-label={$t('add_photos')}
               onclick={() => handleUploadAssets()}
               icon={mdiFileImagePlusOutline}
             />
           {/if}
 
           {#if sharedLink?.allowDownload}
-            <CircleIconButton title={$t('download')} onclick={downloadAssets} icon={mdiFolderDownloadOutline} />
+            <IconButton
+              shape="round"
+              color="secondary"
+              variant="ghost"
+              aria-label={$t('download')}
+              onclick={downloadAssets}
+              icon={mdiDownload}
+            />
           {/if}
         {/snippet}
       </ControlAppBar>
     {/if}
-    <section class="my-[160px] mx-4" bind:clientHeight={viewport.height} bind:clientWidth={viewport.width}>
+    <section class="my-40 mx-4" bind:clientHeight={viewport.height} bind:clientWidth={viewport.width}>
       <GalleryViewer {assets} {assetInteraction} {viewport} />
     </section>
-  {:else}
-    <AssetViewer
-      asset={assets[0]}
-      showCloseButton={false}
-      onAction={handleAction}
-      onPrevious={() => Promise.resolve(false)}
-      onNext={() => Promise.resolve(false)}
-      onRandom={() => Promise.resolve(undefined)}
-      onClose={() => {}}
-    />
+  {:else if assets.length === 1}
+    {#await getAssetInfo({ ...authManager.params, id: assets[0].id }) then asset}
+      {#await import('$lib/components/asset-viewer/asset-viewer.svelte') then { default: AssetViewer }}
+        <AssetViewer cursor={{ current: asset }} onAction={handleAction} />
+      {/await}
+    {/await}
   {/if}
 </section>

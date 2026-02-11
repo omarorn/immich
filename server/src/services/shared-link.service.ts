@@ -1,11 +1,11 @@
 import { BadRequestException, ForbiddenException, Injectable, UnauthorizedException } from '@nestjs/common';
+import { PostgresError } from 'postgres';
 import { SharedLink } from 'src/database';
 import { AssetIdErrorReason, AssetIdsResponseDto } from 'src/dtos/asset-ids.response.dto';
 import { AssetIdsDto } from 'src/dtos/asset.dto';
 import { AuthDto } from 'src/dtos/auth.dto';
 import {
   mapSharedLink,
-  mapSharedLinkWithoutMetadata,
   SharedLinkCreateDto,
   SharedLinkEditDto,
   SharedLinkPasswordDto,
@@ -18,10 +18,10 @@ import { getExternalDomain, OpenGraphTags } from 'src/utils/misc';
 
 @Injectable()
 export class SharedLinkService extends BaseService {
-  async getAll(auth: AuthDto, { albumId }: SharedLinkSearchDto): Promise<SharedLinkResponseDto[]> {
+  async getAll(auth: AuthDto, { id, albumId }: SharedLinkSearchDto): Promise<SharedLinkResponseDto[]> {
     return this.sharedLinkRepository
-      .getAll({ userId: auth.user.id, albumId })
-      .then((links) => links.map((link) => mapSharedLink(link)));
+      .getAll({ userId: auth.user.id, id, albumId })
+      .then((links) => links.map((link) => mapSharedLink(link, { stripAssetMetadata: false })));
   }
 
   async getMine(auth: AuthDto, dto: SharedLinkPasswordDto): Promise<SharedLinkResponseDto> {
@@ -30,7 +30,7 @@ export class SharedLinkService extends BaseService {
     }
 
     const sharedLink = await this.findOrFail(auth.user.id, auth.sharedLink.id);
-    const response = this.mapToSharedLink(sharedLink, { withExif: sharedLink.showExif });
+    const response = mapSharedLink(sharedLink, { stripAssetMetadata: !sharedLink.showExif });
     if (sharedLink.password) {
       response.token = this.validateAndRefreshToken(sharedLink, dto);
     }
@@ -40,60 +40,77 @@ export class SharedLinkService extends BaseService {
 
   async get(auth: AuthDto, id: string): Promise<SharedLinkResponseDto> {
     const sharedLink = await this.findOrFail(auth.user.id, id);
-    return this.mapToSharedLink(sharedLink, { withExif: true });
+    return mapSharedLink(sharedLink, { stripAssetMetadata: false });
   }
 
   async create(auth: AuthDto, dto: SharedLinkCreateDto): Promise<SharedLinkResponseDto> {
     switch (dto.type) {
-      case SharedLinkType.ALBUM: {
+      case SharedLinkType.Album: {
         if (!dto.albumId) {
           throw new BadRequestException('Invalid albumId');
         }
-        await this.requireAccess({ auth, permission: Permission.ALBUM_SHARE, ids: [dto.albumId] });
+        await this.requireAccess({ auth, permission: Permission.AlbumShare, ids: [dto.albumId] });
         break;
       }
 
-      case SharedLinkType.INDIVIDUAL: {
+      case SharedLinkType.Individual: {
         if (!dto.assetIds || dto.assetIds.length === 0) {
           throw new BadRequestException('Invalid assetIds');
         }
 
-        await this.requireAccess({ auth, permission: Permission.ASSET_SHARE, ids: dto.assetIds });
+        await this.requireAccess({ auth, permission: Permission.AssetShare, ids: dto.assetIds });
 
         break;
       }
     }
 
-    const sharedLink = await this.sharedLinkRepository.create({
-      key: this.cryptoRepository.randomBytes(50),
-      userId: auth.user.id,
-      type: dto.type,
-      albumId: dto.albumId || null,
-      assetIds: dto.assetIds,
-      description: dto.description || null,
-      password: dto.password,
-      expiresAt: dto.expiresAt || null,
-      allowUpload: dto.allowUpload ?? true,
-      allowDownload: dto.showMetadata === false ? false : (dto.allowDownload ?? true),
-      showExif: dto.showMetadata ?? true,
-    });
+    try {
+      const sharedLink = await this.sharedLinkRepository.create({
+        key: this.cryptoRepository.randomBytes(50),
+        userId: auth.user.id,
+        type: dto.type,
+        albumId: dto.albumId || null,
+        assetIds: dto.assetIds,
+        description: dto.description || null,
+        password: dto.password,
+        expiresAt: dto.expiresAt || null,
+        allowUpload: dto.allowUpload ?? true,
+        allowDownload: dto.showMetadata === false ? false : (dto.allowDownload ?? true),
+        showExif: dto.showMetadata ?? true,
+        slug: dto.slug || null,
+      });
 
-    return this.mapToSharedLink(sharedLink, { withExif: true });
+      return mapSharedLink(sharedLink, { stripAssetMetadata: false });
+    } catch (error) {
+      this.handleError(error);
+    }
+  }
+
+  private handleError(error: unknown): never {
+    if ((error as PostgresError).constraint_name === 'shared_link_slug_uq') {
+      throw new BadRequestException('Shared link with this slug already exists');
+    }
+    throw error;
   }
 
   async update(auth: AuthDto, id: string, dto: SharedLinkEditDto) {
     await this.findOrFail(auth.user.id, id);
-    const sharedLink = await this.sharedLinkRepository.update({
-      id,
-      userId: auth.user.id,
-      description: dto.description,
-      password: dto.password,
-      expiresAt: dto.changeExpiryTime && !dto.expiresAt ? null : dto.expiresAt,
-      allowUpload: dto.allowUpload,
-      allowDownload: dto.allowDownload,
-      showExif: dto.showMetadata,
-    });
-    return this.mapToSharedLink(sharedLink, { withExif: true });
+    try {
+      const sharedLink = await this.sharedLinkRepository.update({
+        id,
+        userId: auth.user.id,
+        description: dto.description,
+        password: dto.password,
+        expiresAt: dto.changeExpiryTime && !dto.expiresAt ? null : dto.expiresAt,
+        allowUpload: dto.allowUpload,
+        allowDownload: dto.allowDownload,
+        showExif: dto.showMetadata,
+        slug: dto.slug || null,
+      });
+      return mapSharedLink(sharedLink, { stripAssetMetadata: false });
+    } catch (error) {
+      this.handleError(error);
+    }
   }
 
   async remove(auth: AuthDto, id: string): Promise<void> {
@@ -113,7 +130,7 @@ export class SharedLinkService extends BaseService {
   async addAssets(auth: AuthDto, id: string, dto: AssetIdsDto): Promise<AssetIdsResponseDto[]> {
     const sharedLink = await this.findOrFail(auth.user.id, id);
 
-    if (sharedLink.type !== SharedLinkType.INDIVIDUAL) {
+    if (sharedLink.type !== SharedLinkType.Individual) {
       throw new BadRequestException('Invalid shared link type');
     }
 
@@ -121,7 +138,7 @@ export class SharedLinkService extends BaseService {
     const notPresentAssetIds = dto.assetIds.filter((assetId) => !existingAssetIds.has(assetId));
     const allowedAssetIds = await this.checkAccess({
       auth,
-      permission: Permission.ASSET_SHARE,
+      permission: Permission.AssetShare,
       ids: notPresentAssetIds,
     });
 
@@ -153,14 +170,16 @@ export class SharedLinkService extends BaseService {
   async removeAssets(auth: AuthDto, id: string, dto: AssetIdsDto): Promise<AssetIdsResponseDto[]> {
     const sharedLink = await this.findOrFail(auth.user.id, id);
 
-    if (sharedLink.type !== SharedLinkType.INDIVIDUAL) {
+    if (sharedLink.type !== SharedLinkType.Individual) {
       throw new BadRequestException('Invalid shared link type');
     }
 
+    const removedAssetIds = await this.sharedLinkAssetRepository.remove(id, dto.assetIds);
+
     const results: AssetIdsResponseDto[] = [];
     for (const assetId of dto.assetIds) {
-      const hasAsset = sharedLink.assets.find((asset) => asset.id === assetId);
-      if (!hasAsset) {
+      const wasRemoved = removedAssetIds.find((id) => id === assetId);
+      if (!wasRemoved) {
         results.push({ assetId, success: false, error: AssetIdErrorReason.NOT_FOUND });
         continue;
       }
@@ -174,7 +193,7 @@ export class SharedLinkService extends BaseService {
     return results;
   }
 
-  async getMetadataTags(auth: AuthDto): Promise<null | OpenGraphTags> {
+  async getMetadataTags(auth: AuthDto, defaultDomain?: string): Promise<null | OpenGraphTags> {
     if (!auth.sharedLink || auth.sharedLink.password) {
       return null;
     }
@@ -190,12 +209,8 @@ export class SharedLinkService extends BaseService {
     return {
       title: sharedLink.album ? sharedLink.album.albumName : 'Public Share',
       description: sharedLink.description || `${assetCount} shared photos & videos`,
-      imageUrl: new URL(imagePath, getExternalDomain(config.server)).href,
+      imageUrl: new URL(imagePath, getExternalDomain(config.server, defaultDomain)).href,
     };
-  }
-
-  private mapToSharedLink(sharedLink: SharedLink, { withExif }: { withExif: boolean }) {
-    return withExif ? mapSharedLink(sharedLink) : mapSharedLinkWithoutMetadata(sharedLink);
   }
 
   private validateAndRefreshToken(sharedLink: SharedLink, dto: SharedLinkPasswordDto): string {

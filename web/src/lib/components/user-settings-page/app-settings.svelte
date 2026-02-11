@@ -1,23 +1,23 @@
 <script lang="ts">
   import type { ComboBoxOption } from '$lib/components/shared-components/combobox.svelte';
   import SettingCombobox from '$lib/components/shared-components/settings/setting-combobox.svelte';
-  import SettingSwitch from '$lib/components/shared-components/settings/setting-switch.svelte';
-  import { defaultLang, fallbackLocale, langs, locales } from '$lib/constants';
+  import SettingsLanguageSelector from '$lib/components/shared-components/settings/settings-language-selector.svelte';
+  import { fallbackLocale, locales } from '$lib/constants';
+  import { themeManager } from '$lib/managers/theme-manager.svelte';
   import {
     alwaysLoadOriginalFile,
-    colorTheme,
-    lang,
+    alwaysLoadOriginalVideo,
+    autoPlayVideo,
     locale,
     loopVideo,
     playVideoThumbnailOnHover,
     showDeleteModal,
   } from '$lib/stores/preferences.store';
-  import { findLocale } from '$lib/utils';
-  import { getClosestAvailableLocale, langCodes } from '$lib/utils/i18n';
+  import { createDateFormatter, findLocale } from '$lib/utils';
+  import { Field, Switch, Text } from '@immich/ui';
   import { onMount } from 'svelte';
-  import { locale as i18nLocale, t } from 'svelte-i18n';
+  import { t } from 'svelte-i18n';
   import { fade } from 'svelte/transition';
-  import { invalidateAll } from '$app/navigation';
 
   let time = $state(new Date());
 
@@ -40,30 +40,8 @@
       }));
   };
 
-  const handleToggleColorTheme = () => {
-    $colorTheme.system = !$colorTheme.system;
-  };
-
   const handleToggleLocaleBrowser = () => {
-    $locale = $locale ? undefined : fallbackLocale.code;
-  };
-
-  const langOptions = langs
-    .map((lang) => ({ label: lang.name, value: lang.code }))
-    .sort((a, b) => {
-      if (b.label.startsWith('Development')) {
-        return -1;
-      }
-      return a.label.localeCompare(b.label);
-    });
-  const defaultLangOption = { label: defaultLang.name, value: defaultLang.code };
-
-  const handleLanguageChange = async (newLang: string | undefined) => {
-    if (newLang) {
-      $lang = newLang;
-      await i18nLocale.set(newLang);
-      await invalidateAll();
-    }
+    $locale = $locale === 'default' ? fallbackLocale.code : 'default';
   };
 
   const handleLocaleChange = (newLocale: string | undefined) => {
@@ -72,106 +50,64 @@
     }
   };
   let editedLocale = $derived(findLocale($locale).code);
-  let formattedDate = $derived(
-    time.toLocaleString(editedLocale, {
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-    }),
-  );
-  let timePortion = $derived(
-    time.toLocaleString(editedLocale, {
-      hour: '2-digit',
-      minute: '2-digit',
-      second: '2-digit',
-    }),
-  );
-  let selectedDate = $derived(`${formattedDate} ${timePortion}`);
+  let selectedDate: string = $derived(createDateFormatter(editedLocale).formatDateTime(time));
   let selectedOption = $derived({
     value: findLocale(editedLocale).code || fallbackLocale.code,
     label: findLocale(editedLocale).name || fallbackLocale.name,
   });
-  let closestLanguage = $derived(getClosestAvailableLocale([$lang], langCodes));
 </script>
 
 <section class="my-4">
   <div in:fade={{ duration: 500 }}>
-    <div class="ml-4 mt-4 flex flex-col gap-4">
-      <div class="ml-4">
-        <SettingSwitch
-          title={$t('theme_selection')}
-          subtitle={$t('theme_selection_description')}
-          bind:checked={$colorTheme.system}
-          onToggle={handleToggleColorTheme}
-        />
-      </div>
+    <div class="ms-8 mt-4 flex flex-col gap-6">
+      <Field label={$t('theme_selection')} description={$t('theme_selection_description')}>
+        <Switch checked={themeManager.theme.system} onCheckedChange={(checked) => themeManager.setSystem(checked)} />
+      </Field>
 
-      <div class="ml-4">
+      <SettingsLanguageSelector showSettingDescription />
+
+      <Field label={$t('default_locale')} description={$t('default_locale_description')}>
+        <Switch checked={$locale == 'default'} onCheckedChange={handleToggleLocaleBrowser} />
+        <Text size="small" class="mt-2 font-mono text-sm">{selectedDate}</Text>
+      </Field>
+
+      {#if $locale !== 'default'}
         <SettingCombobox
-          comboboxPlaceholder={$t('language')}
-          selectedOption={langOptions.find(({ value }) => value === closestLanguage) || defaultLangOption}
-          options={langOptions}
-          title={$t('language')}
-          subtitle={$t('language_setting_description')}
-          onSelect={(combobox) => handleLanguageChange(combobox?.value)}
+          comboboxPlaceholder={$t('searching_locales')}
+          {selectedOption}
+          options={getAllLanguages()}
+          title={$t('custom_locale')}
+          subtitle={$t('custom_locale_description')}
+          onSelect={(combobox) => handleLocaleChange(combobox?.value)}
         />
-      </div>
-
-      <div class="ml-4">
-        <SettingSwitch
-          title={$t('default_locale')}
-          subtitle={$t('default_locale_description')}
-          checked={$locale == undefined}
-          onToggle={handleToggleLocaleBrowser}
-        >
-          <p class="mt-2 dark:text-gray-400">{selectedDate}</p>
-        </SettingSwitch>
-      </div>
-      {#if $locale !== undefined}
-        <div class="ml-4">
-          <SettingCombobox
-            comboboxPlaceholder={$t('searching_locales')}
-            {selectedOption}
-            options={getAllLanguages()}
-            title={$t('custom_locale')}
-            subtitle={$t('custom_locale_description')}
-            onSelect={(combobox) => handleLocaleChange(combobox?.value)}
-          />
-        </div>
       {/if}
 
-      <div class="ml-4">
-        <SettingSwitch
-          title={$t('display_original_photos')}
-          subtitle={$t('display_original_photos_setting_description')}
-          bind:checked={$alwaysLoadOriginalFile}
-          onToggle={() => ($alwaysLoadOriginalFile = !$alwaysLoadOriginalFile)}
-        />
-      </div>
-      <div class="ml-4">
-        <SettingSwitch
-          title={$t('video_hover_setting')}
-          subtitle={$t('video_hover_setting_description')}
-          bind:checked={$playVideoThumbnailOnHover}
-          onToggle={() => ($playVideoThumbnailOnHover = !$playVideoThumbnailOnHover)}
-        />
-      </div>
-      <div class="ml-4">
-        <SettingSwitch
-          title={$t('loop_videos')}
-          subtitle={$t('loop_videos_description')}
-          bind:checked={$loopVideo}
-          onToggle={() => ($loopVideo = !$loopVideo)}
-        />
-      </div>
+      <Field label={$t('display_original_photos')} description={$t('display_original_photos_setting_description')}>
+        <Switch bind:checked={$alwaysLoadOriginalFile} />
+      </Field>
 
-      <div class="ml-4">
-        <SettingSwitch
-          title={$t('permanent_deletion_warning')}
-          subtitle={$t('permanent_deletion_warning_setting_description')}
-          bind:checked={$showDeleteModal}
-        />
-      </div>
+      <Field label={$t('video_hover_setting')} description={$t('video_hover_setting_description')}>
+        <Switch bind:checked={$playVideoThumbnailOnHover} />
+      </Field>
+
+      <Field
+        label={$t('setting_video_viewer_auto_play_title')}
+        description={$t('setting_video_viewer_auto_play_subtitle')}
+      >
+        <Switch bind:checked={$autoPlayVideo} />
+      </Field>
+
+      <Field label={$t('loop_videos')} description={$t('loop_videos_description')}>
+        <Switch bind:checked={$loopVideo} />
+      </Field>
+
+      <Field label={$t('play_original_video')} description={$t('play_original_video_setting_description')}>
+        <Switch bind:checked={$alwaysLoadOriginalVideo} />
+      </Field>
+
+      <Field label={$t('permanent_deletion_warning')} description={$t('permanent_deletion_warning_setting_description')}
+        ><Switch bind:checked={$showDeleteModal} />
+      </Field>
     </div>
   </div>
 </section>

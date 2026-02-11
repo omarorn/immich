@@ -1,12 +1,12 @@
 import 'dart:convert';
 
-import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_hooks/flutter_hooks.dart' hide Store;
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:immich_mobile/domain/models/store.model.dart';
 import 'package:immich_mobile/entities/store.entity.dart';
 import 'package:immich_mobile/extensions/build_context_extensions.dart';
+import 'package:immich_mobile/extensions/translate_extensions.dart';
 import 'package:immich_mobile/models/auth/auxilary_endpoint.model.dart';
 import 'package:immich_mobile/widgets/settings/networking_settings/endpoint_input.dart';
 
@@ -17,29 +17,21 @@ class ExternalNetworkPreference extends HookConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final entries =
-        useState([AuxilaryEndpoint(url: '', status: AuxCheckStatus.unknown)]);
+    final entries = useState([const AuxilaryEndpoint(url: '', status: AuxCheckStatus.unknown)]);
     final canSave = useState(false);
 
     saveEndpointList() {
-      canSave.value =
-          entries.value.every((e) => e.status == AuxCheckStatus.valid);
+      canSave.value = entries.value.every((e) => e.status == AuxCheckStatus.valid);
 
-      final endpointList = entries.value
-          .where((url) => url.status == AuxCheckStatus.valid)
-          .toList();
+      final endpointList = entries.value.where((url) => url.status == AuxCheckStatus.valid).toList();
 
       final jsonString = jsonEncode(endpointList);
 
-      Store.put(
-        StoreKey.externalEndpointList,
-        jsonString,
-      );
+      Store.put(StoreKey.externalEndpointList, jsonString);
     }
 
     updateValidationStatus(String url, int index, AuxCheckStatus status) {
-      entries.value[index] =
-          entries.value[index].copyWith(url: url, status: status);
+      entries.value[index] = entries.value[index].copyWith(url: url, status: status);
 
       saveEndpointList();
     }
@@ -62,11 +54,7 @@ class ExternalNetworkPreference extends HookConsumerWidget {
       saveEndpointList();
     }
 
-    Widget proxyDecorator(
-      Widget child,
-      int index,
-      Animation<double> animation,
-    ) {
+    Widget proxyDecorator(Widget child, int index, Animation<double> animation) {
       return AnimatedBuilder(
         animation: animation,
         builder: (BuildContext context, Widget? child) {
@@ -80,21 +68,17 @@ class ExternalNetworkPreference extends HookConsumerWidget {
       );
     }
 
-    useEffect(
-      () {
-        final jsonString = Store.tryGet(StoreKey.externalEndpointList);
+    useEffect(() {
+      final jsonString = Store.tryGet(StoreKey.externalEndpointList);
 
-        if (jsonString == null) {
-          return null;
-        }
-
-        final List<dynamic> jsonList = jsonDecode(jsonString);
-        entries.value =
-            jsonList.map((e) => AuxilaryEndpoint.fromJson(e)).toList();
+      if (jsonString == null) {
         return null;
-      },
-      const [],
-    );
+      }
+
+      final List<dynamic> jsonList = jsonDecode(jsonString);
+      entries.value = jsonList.map((e) => AuxilaryEndpoint.fromJson(e)).toList();
+      return null;
+    }, const []);
 
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16.0),
@@ -103,21 +87,14 @@ class ExternalNetworkPreference extends HookConsumerWidget {
         decoration: BoxDecoration(
           borderRadius: const BorderRadius.all(Radius.circular(16)),
           color: context.colorScheme.surfaceContainerLow,
-          border: Border.all(
-            color: context.colorScheme.surfaceContainerHighest,
-            width: 1,
-          ),
+          border: Border.all(color: context.colorScheme.surfaceContainerHighest, width: 1),
         ),
         child: Stack(
           children: [
             Positioned(
               bottom: -36,
               right: -36,
-              child: Icon(
-                Icons.dns_rounded,
-                size: 120,
-                color: context.primaryColor.withValues(alpha: 0.05),
-              ),
+              child: Icon(Icons.dns_rounded, size: 120, color: context.primaryColor.withValues(alpha: 0.05)),
             ),
             ListView(
               padding: const EdgeInsets.symmetric(vertical: 16.0),
@@ -125,14 +102,8 @@ class ExternalNetworkPreference extends HookConsumerWidget {
               shrinkWrap: true,
               children: [
                 Padding(
-                  padding: const EdgeInsets.symmetric(
-                    vertical: 4.0,
-                    horizontal: 24,
-                  ),
-                  child: Text(
-                    "external_network_sheet_info".tr(),
-                    style: context.textTheme.bodyMedium,
-                  ),
+                  padding: const EdgeInsets.symmetric(vertical: 4.0, horizontal: 24),
+                  child: Text("external_network_sheet_info".t(context: context), style: context.textTheme.bodyMedium),
                 ),
                 const SizedBox(height: 4),
                 Divider(color: context.colorScheme.surfaceContainerHighest),
@@ -164,15 +135,12 @@ class ExternalNetworkPreference extends HookConsumerWidget {
                     height: 48,
                     child: OutlinedButton.icon(
                       icon: const Icon(Icons.add),
-                      label: Text('add_endpoint'.tr().toUpperCase()),
+                      label: Text('add_endpoint'.t(context: context)),
                       onPressed: enabled
                           ? () {
                               entries.value = [
                                 ...entries.value,
-                                AuxilaryEndpoint(
-                                  url: '',
-                                  status: AuxCheckStatus.unknown,
-                                ),
+                                const AuxilaryEndpoint(url: '', status: AuxCheckStatus.unknown),
                               ];
                             }
                           : null,

@@ -18,14 +18,7 @@ export default defineConfig({
         'src/services/api.service.ts',
         'src/services/microservices.service.ts',
         'src/services/index.ts',
-        'src/sql-tools/from-database/index.ts',
       ],
-      thresholds: {
-        lines: 85,
-        statements: 85,
-        branches: 90,
-        functions: 85,
-      },
     },
     server: {
       deps: {

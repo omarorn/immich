@@ -71,6 +71,22 @@ For RKMPP to work:
 
 5. (Optional) Enable hardware decoding for optimal performance.
 
+<details>
+<summary>immich.json</summary>
+
+If you use a [configuration file](/install/config-file.md), use the `accel` option to select the hardware (e.g. `qsv` for Intel or `nvenc` for Nvidia). Set `accelDecode` to `true` if you want hardware decoding.
+
+```json
+{
+  "ffmpeg": {
+    "accel": "qsv",
+    "accelDecode": true
+  }
+}
+```
+
+</details>
+
 #### Single Compose File
 
 Some platforms, including Unraid and Portainer, do not support multiple Compose files as of writing. As an alternative, you can "inline" the relevant contents of the [`hwaccel.transcoding.yml`][hw-file] file into the `immich-server` service directly.
@@ -121,6 +137,6 @@ Once this is done, you can continue to step 3 of "Basic Setup".
 
 [hw-file]: https://github.com/immich-app/immich/releases/latest/download/hwaccel.transcoding.yml
 [nvct]: https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html
-[jellyfin-lp]: https://jellyfin.org/docs/general/administration/hardware-acceleration/intel/#configure-and-verify-lp-mode-on-linux
-[jellyfin-kernel-bug]: https://jellyfin.org/docs/general/administration/hardware-acceleration/intel/#known-issues-and-limitations
+[jellyfin-lp]: https://jellyfin.org/docs/general/post-install/transcoding/hardware-acceleration/intel#low-power-encoding
+[jellyfin-kernel-bug]: https://jellyfin.org/docs/general/post-install/transcoding/hardware-acceleration/intel#known-issues-and-limitations-on-linux
 [libmali-rockchip]: https://github.com/tsukumijima/libmali-rockchip/releases

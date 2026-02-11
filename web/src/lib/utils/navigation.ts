@@ -1,8 +1,8 @@
 import { goto } from '$app/navigation';
 import { page } from '$app/stores';
-import { AppRoute } from '$lib/constants';
-import { getAssetInfo } from '@immich/sdk';
-import type { NavigationTarget } from '@sveltejs/kit';
+import type { RouteId } from '$app/types';
+import { assetCacheManager } from '$lib/managers/AssetCacheManager.svelte';
+import { Route } from '$lib/route';
 import { get } from 'svelte/store';
 
 export type AssetGridRouteSearchParams = {
@@ -13,16 +13,19 @@ export const isExternalUrl = (url: string): boolean => {
 };
 
 export const isPhotosRoute = (route?: string | null) => !!route?.startsWith('/(user)/photos/[[assetId=id]]');
-export const isSharedLinkRoute = (route?: string | null) => !!route?.startsWith('/(user)/share/[key]');
+export const isSharedLinkRoute = (route?: string | null) =>
+  !!route?.startsWith('/(user)/share/[key]') || !!route?.startsWith('/(user)/s/[slug]');
 export const isSearchRoute = (route?: string | null) => !!route?.startsWith('/(user)/search');
 export const isAlbumsRoute = (route?: string | null) => !!route?.startsWith('/(user)/albums/[albumId=id]');
 export const isPeopleRoute = (route?: string | null) => !!route?.startsWith('/(user)/people/[personId]');
+export const isLockedFolderRoute = (route?: string | null) => !!route?.startsWith('/(user)/locked');
 
-export const isAssetViewerRoute = (target?: NavigationTarget | null) =>
-  !!(target?.route.id?.endsWith('/[[assetId=id]]') && 'assetId' in (target?.params || {}));
+export const isAssetViewerRoute = (
+  target?: { route?: { id?: RouteId | null }; params?: Record<string, string> | null } | null,
+) => !!(target?.route?.id?.endsWith('/[[assetId=id]]') && 'assetId' in (target?.params || {}));
 
-export function getAssetInfoFromParam({ assetId, key }: { assetId?: string; key?: string }) {
-  return assetId && getAssetInfo({ id: assetId, key });
+export function getAssetInfoFromParam({ assetId, slug, key }: { assetId?: string; key?: string; slug?: string }) {
+  return assetId ? assetCacheManager.getAsset({ id: assetId, slug, key }, false) : undefined;
 }
 
 function currentUrlWithoutAsset() {
@@ -30,7 +33,7 @@ function currentUrlWithoutAsset() {
   // This contains special casing for the /photos/:assetId route, which hangs directly
   // off / instead of a subpath, unlike every other asset-containing route.
   return isPhotosRoute($page.route.id)
-    ? AppRoute.PHOTOS + $page.url.search
+    ? Route.photos() + $page.url.search
     : $page.url.pathname.replace(/(\/photos.*)$/, '') + $page.url.search;
 }
 
@@ -39,12 +42,13 @@ export function currentUrlReplaceAssetId(assetId: string) {
   const params = new URLSearchParams($page.url.search);
   // always remove the assetGridScrollTargetParams
   params.delete('at');
-  const searchparams = params.size > 0 ? '?' + params.toString() : '';
+  const paramsString = params.toString();
+  const searchparams = paramsString == '' ? '' : '?' + params.toString();
   // this contains special casing for the /photos/:assetId photos route, which hangs directly
   // off / instead of a subpath, unlike every other asset-containing route.
   return isPhotosRoute($page.route.id)
-    ? `${AppRoute.PHOTOS}/${assetId}${searchparams}`
-    : `${$page.url.pathname.replace(/(\/photos.*)$/, '')}/photos/${assetId}${searchparams}`;
+    ? `${Route.viewAsset({ id: assetId })}${searchparams}`
+    : `${$page.url.pathname.replace(/\/photos\/[^/]+$/, '')}/photos/${assetId}${searchparams}`;
 }
 
 function replaceScrollTarget(url: string, searchParams?: AssetGridRouteSearchParams | null) {
@@ -141,4 +145,17 @@ export const clearQueryParam = async (queryParam: string, url: URL) => {
     url.searchParams.delete(queryParam);
     await goto(url, { keepFocus: true });
   }
+};
+
+export const getQueryValue = (queryKey: string) => {
+  const url = globalThis.location.href;
+  const urlObject = new URL(url);
+  return urlObject.searchParams.get(queryKey);
+};
+
+export const setQueryValue = async (queryKey: string, queryValue: string) => {
+  const url = globalThis.location.href;
+  const urlObject = new URL(url);
+  urlObject.searchParams.set(queryKey, queryValue);
+  await goto(urlObject, { keepFocus: true });
 };

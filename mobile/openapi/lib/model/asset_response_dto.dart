@@ -14,6 +14,7 @@ class AssetResponseDto {
   /// Returns a new [AssetResponseDto] instance.
   AssetResponseDto({
     required this.checksum,
+    required this.createdAt,
     required this.deviceAssetId,
     required this.deviceId,
     this.duplicateId,
@@ -22,8 +23,10 @@ class AssetResponseDto {
     required this.fileCreatedAt,
     required this.fileModifiedAt,
     required this.hasMetadata,
+    required this.height,
     required this.id,
     required this.isArchived,
+    required this.isEdited,
     required this.isFavorite,
     required this.isOffline,
     required this.isTrashed,
@@ -43,10 +46,15 @@ class AssetResponseDto {
     required this.type,
     this.unassignedFaces = const [],
     required this.updatedAt,
+    required this.visibility,
+    required this.width,
   });
 
   /// base64 encoded sha1 hash
   String checksum;
+
+  /// The UTC timestamp when the asset was originally uploaded to Immich.
+  DateTime createdAt;
 
   String deviceAssetId;
 
@@ -64,15 +72,21 @@ class AssetResponseDto {
   ///
   ExifResponseDto? exifInfo;
 
+  /// The actual UTC timestamp when the file was created/captured, preserving timezone information. This is the authoritative timestamp for chronological sorting within timeline groups. Combined with timezone data, this can be used to determine the exact moment the photo was taken.
   DateTime fileCreatedAt;
 
+  /// The UTC timestamp when the file was last modified on the filesystem. This reflects the last time the physical file was changed, which may be different from when the photo was originally taken.
   DateTime fileModifiedAt;
 
   bool hasMetadata;
 
+  num? height;
+
   String id;
 
   bool isArchived;
+
+  bool isEdited;
 
   bool isFavorite;
 
@@ -80,11 +94,11 @@ class AssetResponseDto {
 
   bool isTrashed;
 
-  /// This property was deprecated in v1.106.0
   String? libraryId;
 
   String? livePhotoVideoId;
 
+  /// The local date and time when the photo/video was taken, derived from EXIF metadata. This represents the photographer's local time regardless of timezone, stored as a timezone-agnostic timestamp. Used for timeline grouping by \"local\" days and months.
   DateTime localDateTime;
 
   String originalFileName;
@@ -111,7 +125,6 @@ class AssetResponseDto {
 
   List<PersonWithFacesResponseDto> people;
 
-  /// This property was deprecated in v1.113.0
   ///
   /// Please note: This property should have been non-nullable! Since the specification file
   /// does not include a default value (using the "default:" property), however, the generated
@@ -130,11 +143,17 @@ class AssetResponseDto {
 
   List<AssetFaceWithoutPersonResponseDto> unassignedFaces;
 
+  /// The UTC timestamp when the asset record was last updated in the database. This is automatically maintained by the database and reflects when any field in the asset was last modified.
   DateTime updatedAt;
+
+  AssetVisibility visibility;
+
+  num? width;
 
   @override
   bool operator ==(Object other) => identical(this, other) || other is AssetResponseDto &&
     other.checksum == checksum &&
+    other.createdAt == createdAt &&
     other.deviceAssetId == deviceAssetId &&
     other.deviceId == deviceId &&
     other.duplicateId == duplicateId &&
@@ -143,8 +162,10 @@ class AssetResponseDto {
     other.fileCreatedAt == fileCreatedAt &&
     other.fileModifiedAt == fileModifiedAt &&
     other.hasMetadata == hasMetadata &&
+    other.height == height &&
     other.id == id &&
     other.isArchived == isArchived &&
+    other.isEdited == isEdited &&
     other.isFavorite == isFavorite &&
     other.isOffline == isOffline &&
     other.isTrashed == isTrashed &&
@@ -163,12 +184,15 @@ class AssetResponseDto {
     other.thumbhash == thumbhash &&
     other.type == type &&
     _deepEquality.equals(other.unassignedFaces, unassignedFaces) &&
-    other.updatedAt == updatedAt;
+    other.updatedAt == updatedAt &&
+    other.visibility == visibility &&
+    other.width == width;
 
   @override
   int get hashCode =>
     // ignore: unnecessary_parenthesis
     (checksum.hashCode) +
+    (createdAt.hashCode) +
     (deviceAssetId.hashCode) +
     (deviceId.hashCode) +
     (duplicateId == null ? 0 : duplicateId!.hashCode) +
@@ -177,8 +201,10 @@ class AssetResponseDto {
     (fileCreatedAt.hashCode) +
     (fileModifiedAt.hashCode) +
     (hasMetadata.hashCode) +
+    (height == null ? 0 : height!.hashCode) +
     (id.hashCode) +
     (isArchived.hashCode) +
+    (isEdited.hashCode) +
     (isFavorite.hashCode) +
     (isOffline.hashCode) +
     (isTrashed.hashCode) +
@@ -197,14 +223,17 @@ class AssetResponseDto {
     (thumbhash == null ? 0 : thumbhash!.hashCode) +
     (type.hashCode) +
     (unassignedFaces.hashCode) +
-    (updatedAt.hashCode);
+    (updatedAt.hashCode) +
+    (visibility.hashCode) +
+    (width == null ? 0 : width!.hashCode);
 
   @override
-  String toString() => 'AssetResponseDto[checksum=$checksum, deviceAssetId=$deviceAssetId, deviceId=$deviceId, duplicateId=$duplicateId, duration=$duration, exifInfo=$exifInfo, fileCreatedAt=$fileCreatedAt, fileModifiedAt=$fileModifiedAt, hasMetadata=$hasMetadata, id=$id, isArchived=$isArchived, isFavorite=$isFavorite, isOffline=$isOffline, isTrashed=$isTrashed, libraryId=$libraryId, livePhotoVideoId=$livePhotoVideoId, localDateTime=$localDateTime, originalFileName=$originalFileName, originalMimeType=$originalMimeType, originalPath=$originalPath, owner=$owner, ownerId=$ownerId, people=$people, resized=$resized, stack=$stack, tags=$tags, thumbhash=$thumbhash, type=$type, unassignedFaces=$unassignedFaces, updatedAt=$updatedAt]';
+  String toString() => 'AssetResponseDto[checksum=$checksum, createdAt=$createdAt, deviceAssetId=$deviceAssetId, deviceId=$deviceId, duplicateId=$duplicateId, duration=$duration, exifInfo=$exifInfo, fileCreatedAt=$fileCreatedAt, fileModifiedAt=$fileModifiedAt, hasMetadata=$hasMetadata, height=$height, id=$id, isArchived=$isArchived, isEdited=$isEdited, isFavorite=$isFavorite, isOffline=$isOffline, isTrashed=$isTrashed, libraryId=$libraryId, livePhotoVideoId=$livePhotoVideoId, localDateTime=$localDateTime, originalFileName=$originalFileName, originalMimeType=$originalMimeType, originalPath=$originalPath, owner=$owner, ownerId=$ownerId, people=$people, resized=$resized, stack=$stack, tags=$tags, thumbhash=$thumbhash, type=$type, unassignedFaces=$unassignedFaces, updatedAt=$updatedAt, visibility=$visibility, width=$width]';
 
   Map<String, dynamic> toJson() {
     final json = <String, dynamic>{};
       json[r'checksum'] = this.checksum;
+      json[r'createdAt'] = this.createdAt.toUtc().toIso8601String();
       json[r'deviceAssetId'] = this.deviceAssetId;
       json[r'deviceId'] = this.deviceId;
     if (this.duplicateId != null) {
@@ -221,8 +250,14 @@ class AssetResponseDto {
       json[r'fileCreatedAt'] = this.fileCreatedAt.toUtc().toIso8601String();
       json[r'fileModifiedAt'] = this.fileModifiedAt.toUtc().toIso8601String();
       json[r'hasMetadata'] = this.hasMetadata;
+    if (this.height != null) {
+      json[r'height'] = this.height;
+    } else {
+    //  json[r'height'] = null;
+    }
       json[r'id'] = this.id;
       json[r'isArchived'] = this.isArchived;
+      json[r'isEdited'] = this.isEdited;
       json[r'isFavorite'] = this.isFavorite;
       json[r'isOffline'] = this.isOffline;
       json[r'isTrashed'] = this.isTrashed;
@@ -270,6 +305,12 @@ class AssetResponseDto {
       json[r'type'] = this.type;
       json[r'unassignedFaces'] = this.unassignedFaces;
       json[r'updatedAt'] = this.updatedAt.toUtc().toIso8601String();
+      json[r'visibility'] = this.visibility;
+    if (this.width != null) {
+      json[r'width'] = this.width;
+    } else {
+    //  json[r'width'] = null;
+    }
     return json;
   }
 
@@ -283,6 +324,7 @@ class AssetResponseDto {
 
       return AssetResponseDto(
         checksum: mapValueOfType<String>(json, r'checksum')!,
+        createdAt: mapDateTime(json, r'createdAt', r'')!,
         deviceAssetId: mapValueOfType<String>(json, r'deviceAssetId')!,
         deviceId: mapValueOfType<String>(json, r'deviceId')!,
         duplicateId: mapValueOfType<String>(json, r'duplicateId'),
@@ -291,8 +333,12 @@ class AssetResponseDto {
         fileCreatedAt: mapDateTime(json, r'fileCreatedAt', r'')!,
         fileModifiedAt: mapDateTime(json, r'fileModifiedAt', r'')!,
         hasMetadata: mapValueOfType<bool>(json, r'hasMetadata')!,
+        height: json[r'height'] == null
+            ? null
+            : num.parse('${json[r'height']}'),
         id: mapValueOfType<String>(json, r'id')!,
         isArchived: mapValueOfType<bool>(json, r'isArchived')!,
+        isEdited: mapValueOfType<bool>(json, r'isEdited')!,
         isFavorite: mapValueOfType<bool>(json, r'isFavorite')!,
         isOffline: mapValueOfType<bool>(json, r'isOffline')!,
         isTrashed: mapValueOfType<bool>(json, r'isTrashed')!,
@@ -312,6 +358,10 @@ class AssetResponseDto {
         type: AssetTypeEnum.fromJson(json[r'type'])!,
         unassignedFaces: AssetFaceWithoutPersonResponseDto.listFromJson(json[r'unassignedFaces']),
         updatedAt: mapDateTime(json, r'updatedAt', r'')!,
+        visibility: AssetVisibility.fromJson(json[r'visibility'])!,
+        width: json[r'width'] == null
+            ? null
+            : num.parse('${json[r'width']}'),
       );
     }
     return null;
@@ -360,14 +410,17 @@ class AssetResponseDto {
   /// The list of required keys that must be present in a JSON.
   static const requiredKeys = <String>{
     'checksum',
+    'createdAt',
     'deviceAssetId',
     'deviceId',
     'duration',
     'fileCreatedAt',
     'fileModifiedAt',
     'hasMetadata',
+    'height',
     'id',
     'isArchived',
+    'isEdited',
     'isFavorite',
     'isOffline',
     'isTrashed',
@@ -378,6 +431,8 @@ class AssetResponseDto {
     'thumbhash',
     'type',
     'updatedAt',
+    'visibility',
+    'width',
   };
 }
 
